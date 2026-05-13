@@ -1,5 +1,5 @@
 {
-	"name": "jolt-physics",
+	"name": "@nilo-technologies/jolt-physics",
 	"version": "1.0.0",
 	"description": "A WebAssembly port of JoltPhysics, a rigid body physics and collision detection library, suitable for games and VR applications",
 	"type": "module",
@@ -44,10 +44,17 @@
 	},
 	"scripts": {
 		"build": "sh build.sh",
-		"examples": "node serveexamples/serveexamples.cjs"
+		"examples": "node serveexamples/serveexamples.cjs",
+		"publish:github": "npm publish"
 	},
-	"homepage": "https://github.com/jrouwe/JoltPhysics.js",
-	"repository": "https://github.com/jrouwe/JoltPhysics.js.git",
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	},
+	"homepage": "https://github.com/nilo-technologies/JoltPhysics",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/nilo-technologies/JoltPhysics.git"
+	},
 	"author": "jrouwe",
 	"license": "MIT",
 	"files": [

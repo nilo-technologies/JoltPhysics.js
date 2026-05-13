@@ -11,6 +11,8 @@ set(JOLT_HEADER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/JoltJS.h)
 set(JOLT_IDL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/JoltJS.idl)
 set(OUTPUT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR}/dist/)
 set(JOLT_TYPING ${OUTPUT_FOLDER}/types.d.ts)
+# Python helpers for IDL concat / sed-like edits (Windows Ninja uses cmd.exe — no cat/sed).
+set(JOLT_BUILD_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/build-tools/jolt_codegen_helpers.py")
 
 # Option to turn on memory profiling
 option(ENABLE_MEMORY_PROFILER "Enable emscriptens memory profiler to help find leaks" OFF)
@@ -73,7 +75,8 @@ if (ENABLE_MULTI_THREADING)
 		-s PTHREAD_POOL_SIZE=16)
 	set(CMAKE_CXX_FLAGS "-pthread -s SHARED_MEMORY")
 	set(OUTPUT_BASE_NAME "${OUTPUT_FOLDER}jolt-physics.multithread")
-	set(REMOVE_THREAD_LOCAL "")
+	# No thread_local stripping for MT; use no-op so COMMAND list is always valid on Windows Ninja.
+	set(GLUE_STRIP_THREAD_LOCAL "${CMAKE_COMMAND}" -E true)
 else()
 	set(MULTI_THREADED_FLAG "")
 	set(ENVIRONMENT_FLAG -s ENVIRONMENT=web,node,worker)
@@ -83,12 +86,15 @@ else()
 	# Removing 'thread_local' from the generated binding code fixes a small 'residual' allocation
 	# in the proper_cleanup.html demo and it is not needed when in single threaded mode.
 	# See: https://github.com/jrouwe/JoltPhysics.js/discussions/222#discussioncomment-11381106
-	set(REMOVE_THREAD_LOCAL sed -i.bak -e "s:thread_local::g" glue.cpp)
+	# Use Python so Ninja on Windows (cmd.exe) does not require sed.
+	set(GLUE_STRIP_THREAD_LOCAL
+		"${Python3_EXECUTABLE}" "${JOLT_BUILD_TOOLS}" strip-thread-local glue.cpp)
 endif()
 
 # Replace 'replace_by_import' by 'import' in the generated JS code to workaround a bug in emscripten
 # See: https://github.com/jrouwe/JoltPhysics.js/issues/245
-set(REPLACE_IMPORT sed -i -e "s:replace_by_import:import:g")
+# Use Python so Windows builds do not require sed.
+set(JOLT_REPLACE_IMPORT "${Python3_EXECUTABLE}" "${JOLT_BUILD_TOOLS}" replace-import-token)
 
 # Enable SIMD flags
 if (ENABLE_SIMD)
@@ -101,14 +107,37 @@ else()
 	set(USE_WASM_SIMD OFF)
 endif()
 
-# Include Jolt
+# Include Jolt: default is FetchContent from a Git remote + tag (no submodule). Nilo uses paired tags
+# `nilo-v5.5.0` on both JoltPhysics (C++) and JoltPhysics.js forks. Override remote/tag for your GitHub org:
+#   -DJOLT_PHYSICS_GIT_REPO=https://github.com/<org>/JoltPhysics -DJOLT_PHYSICS_GIT_TAG=nilo-v5.5.0
+# Or use a local clone (skips fetch):
+#   cmake -B Build/Debug/ST -DJOLT_PHYSICS_PATH=C:/dev/JoltPhysics ...
+# Path must be the repository root (the folder that contains the Build/ directory).
+# That clone should be checked out at the same nilo-* tag as this JoltPhysics.js repo when building.
+set(JOLT_PHYSICS_PATH "" CACHE PATH "Local JoltPhysics C++ repo root; when set, skips GIT fetch.")
+
+set(JOLT_PHYSICS_GIT_REPO "https://github.com/nilo-technologies/JoltPhysics" CACHE STRING "FetchContent: JoltPhysics C++ Git URL (set to your fork).")
+set(JOLT_PHYSICS_GIT_TAG "nilo-v5.5.0" CACHE STRING "FetchContent: tag on JOLT_PHYSICS_GIT_REPO (paired with this repo's nilo-* tag). If unset upstream, use v5.5.0 or a local path.")
+
 include(FetchContent)
-FetchContent_Declare(
-        JoltPhysics
-        GIT_REPOSITORY "https://github.com/jrouwe/JoltPhysics"
-        GIT_TAG "v5.5.0"
+if(JOLT_PHYSICS_PATH)
+	get_filename_component(JOLT_PHYSICS_PATH_RESOLVED "${JOLT_PHYSICS_PATH}" ABSOLUTE)
+	if(NOT EXISTS "${JOLT_PHYSICS_PATH_RESOLVED}/Build/CMakeLists.txt")
+		message(FATAL_ERROR "JOLT_PHYSICS_PATH does not look like a JoltPhysics repo root (missing Build/CMakeLists.txt): ${JOLT_PHYSICS_PATH_RESOLVED}")
+	endif()
+	FetchContent_Declare(
+		JoltPhysics
+		SOURCE_DIR "${JOLT_PHYSICS_PATH_RESOLVED}"
 		SOURCE_SUBDIR "Build"
-)
+	)
+else()
+	FetchContent_Declare(
+		JoltPhysics
+		GIT_REPOSITORY ${JOLT_PHYSICS_GIT_REPO}
+		GIT_TAG ${JOLT_PHYSICS_GIT_TAG}
+		SOURCE_SUBDIR "Build"
+	)
+endif()
 FetchContent_MakeAvailable(JoltPhysics)
 
 # Enable resizable heap, with some amount of slowness. Default is 128*1024*1024 = 128MB
@@ -232,10 +261,10 @@ add_custom_command(
 add_custom_command(
 	OUTPUT glue.cpp glue.js jolt.idl
 	BYPRODUCTS parser.out WebIDLGrammar.pkl
-	COMMAND cat ${JOLT_IDL_FILE} > jolt.idl
+	COMMAND ${Python3_EXECUTABLE} "${JOLT_BUILD_TOOLS}" concat-idl jolt.idl ${JOLT_IDL_FILE}
 	COMMAND ${PYTHON} ${WEBIDL_BINDER_SCRIPT} jolt.idl glue
-	COMMAND ${REMOVE_THREAD_LOCAL}
-	DEPENDS ${JOLT_IDL_FILE}
+	COMMAND ${GLUE_STRIP_THREAD_LOCAL}
+	DEPENDS ${JOLT_IDL_FILE} "${JOLT_BUILD_TOOLS}"
 	COMMENT "Generating JoltPhysics.js bindings"
 	VERBATIM)
 
@@ -262,7 +291,7 @@ if (NOT BUILD_WASM_COMPAT_ONLY)
 	add_custom_command(
 		OUTPUT ${OUTPUT_BASE_NAME}.wasm.js ${OUTPUT_BASE_NAME}.wasm.wasm
 		COMMAND emcc glue.o $<TARGET_FILE:Jolt> ${EMCC_WASM_ARGS} -o ${OUTPUT_BASE_NAME}.wasm.js
-		COMMAND ${REPLACE_IMPORT} ${OUTPUT_BASE_NAME}.wasm.js
+		COMMAND ${JOLT_REPLACE_IMPORT} ${OUTPUT_BASE_NAME}.wasm.js
 		DEPENDS jolt-bindings ${JOLT_FRONT_MATTER_FILE} ${JOLT_TARGETS} ${JOLT_IDL_FILE} ${JOLT_HEADER_FILE}
 		COMMENT "Building JoltPhysics.js webassembly"
 		VERBATIM)
@@ -272,7 +301,7 @@ endif()
 add_custom_command(
 	OUTPUT ${OUTPUT_BASE_NAME}.wasm-compat.js
 	COMMAND emcc glue.o $<TARGET_FILE:Jolt> ${EMCC_WASM_COMPAT_ARGS} -o ${OUTPUT_BASE_NAME}.wasm-compat.js
-	COMMAND ${REPLACE_IMPORT} ${OUTPUT_BASE_NAME}.wasm-compat.js
+	COMMAND ${JOLT_REPLACE_IMPORT} ${OUTPUT_BASE_NAME}.wasm-compat.js
 	DEPENDS jolt-bindings ${JOLT_FRONT_MATTER_FILE} ${JOLT_TARGETS} ${JOLT_IDL_FILE} ${JOLT_HEADER_FILE}
 	COMMENT "Building JoltPhysics.js compat webassembly"
 	VERBATIM)

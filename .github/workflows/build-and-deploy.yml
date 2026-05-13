@@ -3,35 +3,95 @@ name: Build and Deploy
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      jolt_ref:
+        description: "Jolt C++ ref: tag or branch name that exists on GitHub (e.g. nilo-v5.5.0 or master). Push paired tags first: git push origin nilo-v5.5.0"
+        required: false
+        default: "nilo-v5.5.0"
+        type: string
+      dry_run:
+        description: "If true, build only (skip gh-pages and npm publish)."
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   id-token: write # Required for OIDC
-  contents: write # Required to publish the examples
-  
+  contents: write # Examples gh-pages + checkout
+  packages: write # GitHub Packages (@nilo-technologies/jolt-physics)
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      # Paired tag with JoltPhysics.js; keep in sync with CMake default JOLT_PHYSICS_GIT_TAG.
+      # workflow_dispatch can override via the jolt_ref input.
+      JOLT_PHYSICS_CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.jolt_ref || 'nilo-v5.5.0') || 'nilo-v5.5.0' }}
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
 
+    # Shallow fetch (checkout default depth=1) often cannot resolve tags; depth=0 fixes that once the ref exists on GitHub.
+    - name: Verify Jolt ref exists on GitHub
+      env:
+        JOLT_REF: ${{ env.JOLT_PHYSICS_CHECKOUT_REF }}
+      run: |
+        set -euo pipefail
+        URL="https://github.com/nilo-technologies/JoltPhysics"
+        out="$(git ls-remote "$URL" "refs/tags/${JOLT_REF}" "refs/heads/${JOLT_REF}" 2>/dev/null || true)"
+        if [ -n "${out}" ]; then
+          echo "Resolved Jolt ref on ${URL}:"
+          echo "${out}"
+          exit 0
+        fi
+        if echo "${JOLT_REF}" | grep -qE '^[0-9a-f]{40}$'; then
+          echo "JOLT_REF looks like a full SHA; skipping tag/branch preflight."
+          exit 0
+        fi
+        echo "::error::Ref '${JOLT_REF}' not found on ${URL} as a tag or branch. Push it (e.g. git push origin ${JOLT_REF}) or re-run with jolt_ref=master until tags are published."
+        exit 1
+
+    - name: Checkout Jolt (C++)
+      uses: actions/checkout@v6
+      with:
+        repository: nilo-technologies/JoltPhysics
+        ref: ${{ env.JOLT_PHYSICS_CHECKOUT_REF }}
+        path: JoltPhysics
+        fetch-depth: 0
+
     - name: Setup Node.js
       uses: actions/setup-node@v6
       with:
         node-version: '24'
-        registry-url: 'https://registry.npmjs.org'
+        registry-url: 'https://npm.pkg.github.com'
+        scope: '@nilo-technologies'
 
     - name: Build
       run: ./ci/build-examples.sh
       shell: bash
+      env:
+        # ci/build-examples.sh passes this as -DJOLT_PHYSICS_PATH so the job uses the checkout above (not FetchContent).
+        NILO_CI_JOLT_PHYSICS_PATH: ${{ github.workspace }}/JoltPhysics
 
     - name: Deploy Examples
+      if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true' }}
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./Examples
         force_orphan: true
 
+    - name: Upload dist (dry run artifact)
+      if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: jolt-physics-dist
+        path: dist/
+
     - name: Publish NPM
+      if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true' }}
       run: ./ci/npm-publish.sh
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

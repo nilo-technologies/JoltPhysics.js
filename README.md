@@ -1,11 +1,12 @@
-[![Version](https://img.shields.io/npm/v/jolt-physics)](https://www.npmjs.com/package/jolt-physics)
-[![Downloads](https://img.shields.io/npm/dt/jolt-physics.svg)](https://www.npmjs.com/package/jolt-physics)
-[![Bundle Size](https://img.shields.io/bundlephobia/min/jolt-physics?label=bundle%20size)](https://bundlephobia.com/result?p=jolt-physics)
-[![Build Status](https://github.com/jrouwe/JoltPhysics.js/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/jrouwe/JoltPhysics.js/actions/)
+**Package:** [`@nilo-technologies/jolt-physics`](https://github.com/orgs/nilo-technologies/packages) (GitHub Packages; built from this repo).
+
+[![Build Status](https://github.com/nilo-technologies/JoltPhysics.js/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/nilo-technologies/JoltPhysics.js/actions/)
 
 # JoltPhysics.js
 
-This project enables using [Jolt Physics](https://github.com/jrouwe/JoltPhysics) in JavaScript.
+This project enables using [Jolt Physics](https://github.com/nilo-technologies/JoltPhysics) (Nilo’s C++ fork) in JavaScript.
+
+When CMake **FetchContent** is used (no `-DJOLT_PHYSICS_PATH`), it pulls that fork by default: **`JOLT_PHYSICS_GIT_REPO=https://github.com/nilo-technologies/JoltPhysics`** and tag **`nilo-v5.5.0`**. Override with `-DJOLT_PHYSICS_GIT_REPO` / `-DJOLT_PHYSICS_GIT_TAG`, or point at a local clone with `-DJOLT_PHYSICS_PATH`.
 
 ## Demos
 
@@ -32,39 +33,41 @@ Almost the entire Jolt interface has been exposed. Check [JoltJS.idl](https://gi
 
 ### Installation
 
-This library is distributed as ECMAScript modules on npm:
+This library is distributed as ECMAScript modules on **GitHub Packages** as **`@nilo-technologies/jolt-physics`**. Add to [`.npmrc`](.npmrc) (or your user config): `@nilo-technologies:registry=https://npm.pkg.github.com`, then authenticate ([GitHub npm registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)). Install:
 
 ```sh
-npm install jolt-physics
+npm install @nilo-technologies/jolt-physics
 ```
+
+The upstream project also publishes **`jolt-physics`** on the public npm registry; this fork uses a scoped name for org publishing.
 
 The different flavours are available via entrypoints on the npm package:
 
 ```js
 // WASM embedded in the bundle
-import Jolt from 'jolt-physics';
-import Jolt from 'jolt-physics/wasm-compat';
+import Jolt from '@nilo-technologies/jolt-physics';
+import Jolt from '@nilo-technologies/jolt-physics/wasm-compat';
 
 // WASM embedded in the bundle, debug checking enabled (outputs errors to the console and enables the debug renderer)
-import Jolt from 'jolt-physics/debug-wasm-compat';
+import Jolt from '@nilo-technologies/jolt-physics/debug-wasm-compat';
 
 // WASM
-import Jolt from 'jolt-physics/wasm';
+import Jolt from '@nilo-technologies/jolt-physics/wasm';
 
 // asm.js
-import Jolt from 'jolt-physics/asm';
+import Jolt from '@nilo-technologies/jolt-physics/asm';
 
 // WASM embedded in the bundle, multithread enabled
-import Jolt from 'jolt-physics/wasm-compat-multithread';
+import Jolt from '@nilo-technologies/jolt-physics/wasm-compat-multithread';
 
 // WASM embedded in the bundle, multithread enabled, debug checking enabled (outputs errors to the console and enables the debug renderer)
-import Jolt from 'jolt-physics/debug-wasm-compat-multithread';
+import Jolt from '@nilo-technologies/jolt-physics/debug-wasm-compat-multithread';
 
 // WASM, multithread enabled
-import Jolt from 'jolt-physics/wasm-multithread';
+import Jolt from '@nilo-technologies/jolt-physics/wasm-multithread';
 ```
 
-You can also import esm bundles with unpkg:
+You can also import esm bundles with unpkg (public **`jolt-physics`** package on npm; this fork’s GitHub Packages build is normally consumed via a bundler or `npm pack` tarball):
 
 ```html
 <script type="module">
@@ -82,11 +85,11 @@ Where ```x.y.z``` is the version of the library you want to use.
 
 To use the `wasm` flavour, you must either serve the WASM file `jolt-physics.wasm.wasm` alongside `jolt-physics.wasm.js`, or use a bundler that supports importing an asset as a url, and tell Jolt where to find the WASM file.
 
-To specify where to retrieve the WASM file from, you can pass a `locateFile` function to the default export of `jolt-physics/wasm`. For example, using [vite](https://vitejs.dev/) this would look like: 
+To specify where to retrieve the WASM file from, you can pass a `locateFile` function to the default export of `@nilo-technologies/jolt-physics/wasm`. For example, using [vite](https://vitejs.dev/) this would look like: 
 
 ```js
-import initJolt from "jolt-physics";
-import joltWasmUrl from "jolt-physics/jolt-physics.wasm.wasm?url";
+import initJolt from "@nilo-technologies/jolt-physics";
+import joltWasmUrl from "@nilo-technologies/jolt-physics/jolt-physics.wasm.wasm?url";
 
 const Jolt = await initJolt({
   locateFile: () => joltWasmUrl,
@@ -102,6 +105,8 @@ This project has only been compiled under Linux.
 * Install [emscripten](https://emscripten.org/) and ensure that its environment variables have been setup
 * Install [cmake](https://cmake.org/)
 * Run ```./build.sh``` to build both the Debug and Distribution build, ```./build.sh Debug``` for only the Debug build.
+* **GitHub Actions** checks out [nilo-technologies/JoltPhysics](https://github.com/nilo-technologies/JoltPhysics) at the ref from **`JOLT_PHYSICS_CHECKOUT_REF`** / the **jolt_ref** input (default **`nilo-v5.5.0`**, keep in sync with **`JOLT_PHYSICS_GIT_TAG`** in CMake) and passes **`-DJOLT_PHYSICS_PATH`**. That ref must **exist on GitHub** (push your paired tag: `git push origin nilo-v5.5.0` on the Jolt repo, or pass **jolt_ref** `master` for a trial until tags are up). The Jolt checkout uses **`fetch-depth: 0`** so tags resolve reliably.
+* **Trial run:** **Actions** → **Build and Deploy** → **Run workflow**; leave **dry run** on to get a **`jolt-physics-dist`** artifact only, or turn it off to publish.
 
 Additional options that can be provided to ```build.sh```:
 
