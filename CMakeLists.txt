@@ -150,6 +150,46 @@ else()
 endif()
 FetchContent_MakeAvailable(JoltPhysics)
 
+# Nilo fork: portable DWARF source paths for in-browser C++ debugging.
+#
+# Without this, DWARF records absolute build-host paths (e.g.
+# /home/runner/work/JoltPhysics.js/JoltPhysics.js/glue.cpp on CI, or a developer's
+# local C:/dev/... path on a fork build). Chrome's "C/C++ DevTools Support (DWARF)"
+# extension then can't locate sources on any other machine without per-user path
+# substitutions in the extension settings.
+#
+# We rewrite the two source roots to short, stable, relative names:
+#   <JoltPhysics.js repo root>  ->  JoltPhysics.js/
+#   <JoltPhysics C++ repo root> ->  JoltPhysics/
+# A developer who keeps both clones as siblings (e.g. C:/dev/JoltPhysics.js and
+# C:/dev/JoltPhysics) and adds the parent folder (C:/dev) as a workspace folder in
+# the DWARF extension gets line-level stepping with zero manual path mapping.
+#
+# Notes:
+# * -fdebug-prefix-map rewrites paths in DWARF only (does not change __FILE__).
+# * Flags are applied to (a) the Jolt CMake target (compiles Jolt/**.cpp), (b)
+#   EMCC_GLUE_ARGS (compiles generated glue.cpp), and (c) EMCC_ARGS (the emcc link
+#   step, where some DWARF tables are stitched together).
+# * Longer/more-specific paths must come first; "JoltPhysics.js" is a strict
+#   superstring of "JoltPhysics", so put the JS repo mapping first to avoid the
+#   shorter prefix swallowing it.
+if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+	get_filename_component(JPH_PREFIX_MAP_JS_REPO  "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
+	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JoltPhysics_SOURCE_DIR}"   ABSOLUTE)
+	set(JPH_DEBUG_PREFIX_MAP_FLAGS
+		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
+		"-fdebug-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics")
+	if (TARGET Jolt)
+		target_compile_options(Jolt PRIVATE ${JPH_DEBUG_PREFIX_MAP_FLAGS})
+	endif()
+	message(STATUS "JoltPhysics.js Debug DWARF prefix maps:")
+	foreach(_jph_map IN LISTS JPH_DEBUG_PREFIX_MAP_FLAGS)
+		message(STATUS "  ${_jph_map}")
+	endforeach()
+else()
+	set(JPH_DEBUG_PREFIX_MAP_FLAGS "")
+endif()
+
 # Enable resizable heap, with some amount of slowness. Default is 128*1024*1024 = 128MB
 if (ALLOW_MEMORY_GROWTH)
 	set(MEMORY_GROWTH_FLAG
@@ -199,6 +239,7 @@ set(EMCC_ARGS
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	set(EMCC_ARGS
 		${EMCC_ARGS}
+		${JPH_DEBUG_PREFIX_MAP_FLAGS}
 		-g${JPH_DEBUG_SYMBOL_FORMAT}
 		-s ASSERTIONS)
 else()
@@ -240,6 +281,7 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	set(JOLT_IDL_FILE ${JOLT_IDL_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/JoltJS-DebugRenderer.idl )
 	set(EMCC_GLUE_ARGS
 		${EMCC_GLUE_ARGS}
+		${JPH_DEBUG_PREFIX_MAP_FLAGS}
 		-DJPH_DEBUG_RENDERER -DJPH_PROFILE_ENABLED -D_DEBUG)
 elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
 	set(JOLT_IDL_FILE ${JOLT_IDL_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/JoltJS-DebugRenderer.idl )
