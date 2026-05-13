@@ -11,7 +11,7 @@ on:
         default: "nilo-v5.5.0"
         type: string
       dry_run:
-        description: "If true, build only (skip gh-pages and npm publish)."
+        description: "If true, build only (skip gh-pages, npm publish, and GitHub Release)."
         required: false
         default: true
         type: boolean
@@ -90,8 +90,68 @@ jobs:
         name: jolt-physics-dist
         path: dist/
 
+    # Matches ci/npm-publish.sh: only first publish of this version gets a GitHub Release with dist artifacts.
+    - name: Check whether npm version will be published
+      id: pkg_publish
+      if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=$(node -pe "require('./package.json').version")
+        NAME=$(node -pe "require('./package.json').name")
+        REGISTRY=$(node -pe "require('./package.json').publishConfig?.registry || 'https://registry.npmjs.org'")
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        if npm view "${NAME}@${VERSION}" version --registry="${REGISTRY}" >/dev/null 2>&1; then
+          echo "would_publish=false" >> "$GITHUB_OUTPUT"
+          echo "Version ${VERSION} is already on ${REGISTRY}; skipping dist pack + GitHub Release for this run."
+        else
+          echo "would_publish=true" >> "$GITHUB_OUTPUT"
+          echo "Version ${VERSION} is not on ${REGISTRY}; npm publish and GitHub Release will follow."
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Pack dist for GitHub Release
+      if: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') && steps.pkg_publish.outputs.would_publish == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ steps.pkg_publish.outputs.version }}"
+        {
+          echo "npm_package_version=${VERSION}"
+          echo "jolt_cpp_checkout_ref=${JOLT_PHYSICS_CHECKOUT_REF}"
+          echo "joltphysics_js_repository=${GITHUB_REPOSITORY}"
+          echo "joltphysics_js_sha=${GITHUB_SHA}"
+          echo "github_event=${GITHUB_EVENT_NAME}"
+          echo "github_run_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        } > dist/BUILD_INFO.txt
+        tar -czf "jolt-physics-${VERSION}-dist.tar.gz" -C dist .
+        ls -la "jolt-physics-${VERSION}-dist.tar.gz"
+
     - name: Publish NPM
       if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true' }}
       run: ./ci/npm-publish.sh
       env:
         NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create GitHub Release with dist artifacts
+      if: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') && steps.pkg_publish.outputs.would_publish == 'true' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.pkg_publish.outputs.version }}
+        name: "jolt-physics ${{ steps.pkg_publish.outputs.version }}"
+        body: |
+          ## Dist artifacts
+          **`jolt-physics-${{ steps.pkg_publish.outputs.version }}-dist.tar.gz`** is a gzip tar of the full **`dist/`** tree from CI (wasm-compat single-file, debug wasm-compat, plain wasm + `.wasm` sidecars, multithread variants, `types.d.ts`, etc.), including **`BUILD_INFO.txt`** with provenance. Use it for Wasm/DWARF debugging, symbolication uploads, or diffing against the npm package contents.
+
+          | Field | Value |
+          | --- | --- |
+          | npm | `@nilo-technologies/jolt-physics@${{ steps.pkg_publish.outputs.version }}` (GitHub Packages) |
+          | Jolt C++ ref | `${{ env.JOLT_PHYSICS_CHECKOUT_REF }}` |
+          | JoltPhysics.js SHA | `${{ github.sha }}` |
+          | Workflow run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |
+        files: jolt-physics-${{ steps.pkg_publish.outputs.version }}-dist.tar.gz
+        fail_on_unmatched_files: true
+        make_latest: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
