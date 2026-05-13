@@ -36,10 +36,31 @@ Almost the entire Jolt interface has been exposed. Check [JoltJS.idl](https://gi
 This library is distributed as ECMAScript modules on **GitHub Packages** as **`@nilo-technologies/jolt-physics`**. Add to [`.npmrc`](.npmrc) (or your user config): `@nilo-technologies:registry=https://npm.pkg.github.com`, then authenticate ([GitHub npm registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)). Install:
 
 ```sh
-npm install @nilo-technologies/jolt-physics
+npm install @nilo-technologies/jolt-physics@nilo
 ```
 
+The **`nilo`** [dist-tag](https://docs.npmjs.com/cli/v10/commands/npm-dist-tag) points at the latest **`…-nilo.*`** prerelease from CI (required by npm when publishing prereleases). You can still pin an exact version, e.g. **`@nilo-technologies/jolt-physics@5.5.0-nilo.0`**.
+
 The upstream project also publishes **`jolt-physics`** on the public npm registry; this fork uses a scoped name for org publishing.
+
+### Versioning (Nilo fork)
+
+npm allows only **three** numeric segments (`MAJOR.MINOR.PATCH`). The published version uses a **prerelease** segment as a fourth counter: **`5.5.0-nilo.0`**, **`5.5.0-nilo.1`**, …
+
+- **`5.5.0`** matches the **Jolt C++ API** line you pair with git tag **`nilo-v5.5.0`** (bump this when you move to e.g. **`nilo-v5.6.0`** → **`5.6.0-nilo.0`**).
+- **`nilo.N`** increments for **fork-only** changes (CI, packaging, bindings tweaks) without changing the Jolt API pin.
+
+Bump only the fork counter before republishing the same API pin (must already include `-nilo.*`):
+
+```sh
+npm version prerelease --preid=nilo --no-git-tag-version
+```
+
+That turns **`5.5.0-nilo.0`** → **`5.5.0-nilo.1`**. To introduce the first prerelease from a plain **`5.5.0`**, set the version explicitly (because plain **`npm version prerelease`** would bump patch, not add **`-nilo.0`**):
+
+```sh
+npm version 5.5.0-nilo.0 --no-git-tag-version
+```
 
 The different flavours are available via entrypoints on the npm package:
 
