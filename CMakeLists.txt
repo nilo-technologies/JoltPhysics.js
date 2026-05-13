@@ -47,10 +47,20 @@ set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF)
 # Turn off LTO
 set(INTERPROCEDURAL_OPTIMIZATION OFF)
 
-# Override debug symbols
+# Override debug symbols.
+#
+# Nilo fork: emit full DWARF in Debug builds (level 3) so the Chrome "C/C++ DevTools
+# Support (DWARF)" extension can attach to the wasm module for line-level + locals
+# C++ debugging. Previously "source-map" emitted a sidecar .wasm.map, which:
+#   * Is not understood by the DWARF DevTools extension.
+#   * Is unreachable in the wasm-compat single-file layout (wasm bytes embedded in JS,
+#     so the wasm has no URL for a relative sourceMappingURL to resolve against).
+# Trade-off: the Debug wasm-compat bundle grows substantially because DWARF sections
+# are embedded inside the wasm bytes. Debug builds are intended for local development
+# (Nilo opts in via NILO_JOLT_DEBUG=true), not production.
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	set(GENERATE_DEBUG_SYMBOLS ON)
-	set(JPH_DEBUG_SYMBOL_FORMAT "source-map" CACHE STRING "")
+	set(JPH_DEBUG_SYMBOL_FORMAT "3" CACHE STRING "")
 else()
 	set(GENERATE_DEBUG_SYMBOLS OFF)
 endif()
