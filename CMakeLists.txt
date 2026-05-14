@@ -350,7 +350,11 @@ set(EMCC_WASM_COMPAT_ARGS ${EMCC_WASM_ARGS}
 
 set(EMCC_GLUE_ARGS
   -c
-  -I${JPH_JOLT_PHYSICS_SOURCE_ROOT}/..
+  # Jolt headers live at ``<Jolt C++ repo root>/Jolt/Jolt.h``. FetchContent's
+  # ``joltphysics_SOURCE_DIR`` is that repo root; do NOT add ``/..`` (that points
+  # at the JoltPhysics.js workspace root and breaks ``#include "Jolt/Jolt.h"`` in
+  # ``JoltJS.h`` when the C++ checkout is a sibling under ``<ws>/JoltPhysics``).
+  -I${JPH_JOLT_PHYSICS_SOURCE_ROOT}
   -Wall
   -std=c++17
   -fno-rtti
