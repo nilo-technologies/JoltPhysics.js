@@ -209,15 +209,38 @@ else()
 	set(INCLUDE_DEMANGLE_ALL_FLAG "")
 endif()
 
+# Nilo fork: gate Google Closure pass behind an option so dev iteration builds can skip
+# it. Closure adds ~30s to the emcc link step (90 %+ of incremental rebuild time once
+# Ninja is doing its job on the C++ side). C++ correctness and DWARF debugging are
+# unaffected by skipping it. Default ON for two reasons:
+#   1. CI / publish builds must match upstream output exactly.
+#   2. Closure minifies the JS glue (long identifier names -> short) which dramatically
+#      shrinks the *JS source text* that Chrome DevTools' Sources panel has to render
+#      when execution pauses inside Jolt code (a breakpoint, exception, etc.). Without
+#      closure, the unminified glue can be 5-10 MB of JS; with closure it's ~1-2 MB.
+#      Above ~3 MB DevTools' Sources panel becomes unreliable and the renderer OOMs
+#      shortly after auto-switching to Sources view.
+# `JPH_DEV_FAST_LINK=ON` is appropriate ONLY for iteration sessions where you do not
+# need DevTools to survive a pause inside Jolt code (e.g. fast feedback on physics
+# behavior changes without setting JS or C++ breakpoints).
+option(JPH_DEV_FAST_LINK "Skip --closure=1 in emcc link to accelerate dev iteration. WARNING: produces a larger JS glue that can crash Chrome DevTools' Sources panel when paused inside Jolt code. Only enable for iteration sessions where DevTools is closed." OFF)
+if (JPH_DEV_FAST_LINK)
+	set(JPH_CLOSURE_ARGS "")
+	message(STATUS "JPH_DEV_FAST_LINK=ON: skipping --closure=1 in EMCC link (dev iteration mode)")
+else()
+	set(JPH_CLOSURE_ARGS
+		--closure=1
+		--closure-args="--dynamic_import_alias=replace_by_import"
+		--closure-args="--externs"
+		--closure-args="${CMAKE_CURRENT_SOURCE_DIR}/extern-import.js")
+endif()
+
 set(EMCC_ARGS
   -fno-rtti
   -fno-exceptions
   --extern-pre-js ${JOLT_FRONT_MATTER_FILE}
   --post-js glue.js
-  --closure=1
-  --closure-args="--dynamic_import_alias=replace_by_import"
-  --closure-args="--externs"
-  --closure-args="${CMAKE_CURRENT_SOURCE_DIR}/extern-import.js"
+  ${JPH_CLOSURE_ARGS}
   ${MULTI_THREADED_FLAG}
   --post-js ${CMAKE_CURRENT_SOURCE_DIR}/helpers.js
   ${MEMORY_GROWTH_FLAG}

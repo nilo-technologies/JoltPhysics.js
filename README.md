@@ -2,9 +2,166 @@
 
 [![Build Status](https://github.com/nilo-technologies/JoltPhysics.js/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/nilo-technologies/JoltPhysics.js/actions/)
 
-# JoltPhysics.js
+# Nilo fork — working in this repo
 
-This project enables using [Jolt Physics](https://github.com/nilo-technologies/JoltPhysics) (Nilo’s C++ fork) in JavaScript.
+This is Nilo's private fork of `JoltPhysics.js`. We do not merge back upstream; the workflows in this section are the authoritative ones for working in this repo. The upstream README is preserved below ([jump to it](#joltphysicsjs-upstream-readme)) for API reference.
+
+## Repository layout (sibling clones)
+
+The build scripts use a sibling-clone convention. Put these repos in the same parent folder (commonly `C:\dev\`):
+
+| Folder | Purpose | Repo |
+|---|---|---|
+| `JoltPhysics.js/` | This repo. WASM bindings + npm package. | `nilo-technologies/JoltPhysics.js` |
+| `JoltPhysics/`    | Nilo's C++ Jolt fork. Linked into this build via `-DJOLT_PHYSICS_PATH`. | `nilo-technologies/JoltPhysics` |
+| `emsdk/`          | Emscripten SDK (compiles C++ → WASM). | `emscripten-core/emsdk` |
+| `Nilo/`           | The Nilo client. Consumes the published package; can also point at a local build of this repo. | _private_ |
+
+If you keep this layout, `iter-build-windows.ps1` and `build-windows.ps1` auto-detect everything. To use a different layout, set `JOLT_PHYSICS_PATH` and `EMSDK` environment variables.
+
+**Tag convention:** both `JoltPhysics` and `JoltPhysics.js` use `nilo-vX.Y.Z` git tags on paired commits (`X.Y.Z` is the upstream Jolt C++ API the fork is paired with). Build scripts default to `nilo-v5.5.0`; override with `$env:NILO_JOLT_TAG`.
+
+## One-time setup
+
+1. Install **CMake** (>= 3.20), **Ninja**, and **Node.js** (>= 18) on PATH.
+2. Clone the Emscripten SDK:
+   ```powershell
+   git clone https://github.com/emscripten-core/emsdk C:\dev\emsdk
+   cd C:\dev\emsdk
+   .\emsdk.ps1 install latest
+   .\emsdk.ps1 activate latest
+   ```
+3. Clone Nilo's Jolt C++ fork:
+   ```powershell
+   git clone https://github.com/nilo-technologies/JoltPhysics C:\dev\JoltPhysics
+   cd C:\dev\JoltPhysics
+   git checkout nilo-v5.5.0
+   ```
+4. Clone this repo on the `nilo` branch:
+   ```powershell
+   git clone -b nilo https://github.com/nilo-technologies/JoltPhysics.js C:\dev\JoltPhysics.js
+   ```
+
+## Fast C++ iteration loop (daily-driver flow)
+
+When you want to make a C++ change in `C:\dev\JoltPhysics`, build it locally, and run Nilo against your build without re-publishing the npm package:
+
+```powershell
+# from C:\dev\Nilo
+just jolt-iter                          # Debug, closure on, ~30-60 s/iter
+just jolt-iter "-FastLink"              # closure off, ~5-20 s/iter (Debug-safe)
+just jolt-iter "-Variant Release"       # build the wasm-compat publish-format
+
+# Equivalent, run directly from C:\dev\JoltPhysics.js:
+.\iter-build-windows.ps1
+.\iter-build-windows.ps1 -FastLink
+.\iter-build-windows.ps1 -Variant Release
+```
+
+What it does:
+
+* Configures one Ninja build dir at `Build\Iter\<Variant>\ST` and reuses it across runs (no `rm -rf dist`; incremental rebuilds stay valid).
+* Builds a single target: `jolt-wasm` for Debug, `jolt-wasm-compat` for Release.
+* Emits the result into `dist\` so Nilo's Vite alias can pick it up.
+
+**Output layout** depends on `-Variant`:
+
+| Variant | Output files | Format | Used by |
+|---|---|---|---|
+| Debug   | `dist\jolt-physics.wasm.js` + `dist\jolt-physics.wasm.wasm` | non-compat (separate `.wasm` sidecar) | C++ debugging in Chrome DevTools |
+| Release | `dist\jolt-physics.wasm-compat.js`                          | wasm-compat (single file, embedded WASM) | matches the publish-quality format |
+
+Why the asymmetry: the wasm-compat single-file format embeds the entire WASM (~30 MB with DWARF) as one base64 string literal in the JS. The resulting ~42 MB JS source crashes Chrome DevTools' renderer when setting C++ breakpoints (the DWARF extension has to keep the WASM bytes, JS source, and DWARF index resident simultaneously). The non-compat form keeps the JS glue ~1 MB and exposes the WASM as a first-class binary resource that DevTools handles natively. So we use non-compat for Debug iter and wasm-compat for Release iter (matches what Nilo actually loads in production).
+
+### Wiring an iter build into Nilo
+
+One-time, add to `C:\dev\Nilo\.env.local`:
+
+```env
+NILO_JOLT_LOCAL_DIST=C:/dev/JoltPhysics.js/dist
+NILO_JOLT_DEBUG=true    # must match the variant of your last iter build
+```
+
+Then:
+
+```powershell
+cd C:\dev\Nilo
+pnpm dev:jolt-debug     # NILO_JOLT_DEBUG=true; use `pnpm dev` for Release iter
+```
+
+`vite.config.js` re-aliases `jolt-physics` on dev-server start, disables `optimizeDeps` for it, and extends `server.fs.allow` so the `.wasm.wasm` sidecar fetch works. Subsequent re-runs of `iter-build-windows.ps1` do **not** require a Vite restart — just hard-refresh the browser tab.
+
+### C++ source resolution in Chrome DevTools
+
+Install the **C/C++ DevTools Support (DWARF)** extension. Open its options, and under **Path substitutions** add (order matters; more-specific first):
+
+| Source path (in DWARF) | Local path |
+|---|---|
+| `JoltPhysics.js/` | `C:\dev\JoltPhysics.js\` |
+| `JoltPhysics/`    | `C:\dev\JoltPhysics\` |
+
+These work for both local-iter builds **and** the published debug package — `CMakeLists.txt` uses `-fdebug-prefix-map` so DWARF stores those relative roots regardless of build host (CI, your workstation, anyone else's).
+
+## Publish-quality build (local)
+
+For a full multi-variant build matching what CI produces (Distribution ST + MT + wasm-compat + asm, all 7 flavours):
+
+```powershell
+# from C:\dev\JoltPhysics.js
+.\build-windows.ps1                       # default: Distribution + fast Debug wasm-compat
+.\build-windows.ps1 -BuildType Debug      # Debug-only (faster, full DWARF + assertions)
+```
+
+This is the Windows equivalent of upstream's `./build.sh`. It checks out `$env:NILO_JOLT_TAG` (default `nilo-v5.5.0`) in **both** the `JoltPhysics.js` and `JoltPhysics` clones before configuring, so the build matches a known pair. Outputs land in `dist\` ready for `npm pack` / `npm publish`.
+
+## Publishing to GitHub Packages
+
+Publishing is **CI-only**. Don't `npm publish` from a workstation.
+
+1. **Bump the version** in `package.json`. The scheme is `MAJOR.MINOR.PATCH-nilo.N`:
+   * `MAJOR.MINOR.PATCH` mirrors the upstream Jolt C++ API line (paired with git tag `nilo-vMAJOR.MINOR.PATCH` on both repos).
+   * `nilo.N` is our fork counter — bump for any fork-only change (CI, packaging, binding tweaks).
+   ```powershell
+   # Fork-counter bump (e.g. 5.5.0-nilo.0 -> 5.5.0-nilo.1):
+   npm version prerelease --preid=nilo --no-git-tag-version
+
+   # Move to a new Jolt C++ API pin (e.g. 5.5.0 -> 5.6.0):
+   npm version 5.6.0-nilo.0 --no-git-tag-version
+   ```
+   npm only allows three numeric segments, so the fourth counter has to live in the prerelease tag.
+2. **Tag both repos** with the new pair (push `nilo-vX.Y.Z` to `nilo-technologies/JoltPhysics` first, then to this repo) and verify the C++ tag is reachable on GitHub. The Action checks out the C++ ref with `fetch-depth: 0` so tags resolve reliably, but the tag has to exist.
+3. **Trigger the workflow:** GitHub → **Actions** → **Build and Deploy** → **Run workflow**.
+   * Leave **dry run** ON to produce a `jolt-physics-dist` artifact for inspection without publishing.
+   * Turn **dry run** OFF to publish. The Action also creates a **GitHub Release** with the `dist/` tarball attached — handy for symbolication and pinning old debug bundles.
+4. **First publish only:** the package starts Private. Open the [organisation packages page](https://github.com/orgs/nilo-technologies/packages), find `jolt-physics`, and set visibility to Public. Subsequent publishes inherit the same visibility.
+
+## Consuming the package from Nilo
+
+The published artifacts are wired into the Nilo client (`C:\dev\Nilo`) via:
+
+* Root `package.json` and `packages/physics-with-jolt/package.json` alias `jolt-physics` → `npm:@nilo-technologies/jolt-physics@5.5.0-nilo.N`. Bump both when you publish.
+* Root `.npmrc` maps `@nilo-technologies` → `https://npm.pkg.github.com`.
+* For local install you need a **classic** GitHub personal access token with `read:packages` scope. Fine-grained tokens are flaky against GitHub Packages — stick to classic. One-time per machine:
+  ```powershell
+  pnpm config set //npm.pkg.github.com/:_authToken=ghp_xxx --location user
+  ```
+  Authorize the token for the `nilo-technologies` SAML org.
+
+For a one-off package swap experiment (rare — `NILO_JOLT_LOCAL_DIST` is the preferred local-dev path because it doesn't touch lockfiles):
+
+```powershell
+cd C:\dev\Nilo
+just link-jolt-local-sibling    # pnpm-link jolt-physics -> ..\JoltPhysics.js
+just unlink-jolt-local          # restore the published version
+```
+
+Don't commit `package.json` / `pnpm-lock.yaml` while linked.
+
+---
+
+# JoltPhysics.js (upstream README)
+
+This project enables using [Jolt Physics](https://github.com/nilo-technologies/JoltPhysics) (Nilo's C++ fork) in JavaScript.
 
 When CMake **FetchContent** is used (no `-DJOLT_PHYSICS_PATH`), it pulls that fork by default: **`JOLT_PHYSICS_GIT_REPO=https://github.com/nilo-technologies/JoltPhysics`** and tag **`nilo-v5.5.0`**. Override with `-DJOLT_PHYSICS_GIT_REPO` / `-DJOLT_PHYSICS_GIT_TAG`, or point at a local clone with `-DJOLT_PHYSICS_PATH`.
 
