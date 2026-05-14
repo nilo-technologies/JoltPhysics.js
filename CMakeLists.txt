@@ -168,18 +168,34 @@ FetchContent_MakeAvailable(JoltPhysics)
 # extension then can't locate sources on any other machine without per-user path
 # substitutions in the extension settings.
 #
-# We rewrite the two source roots to short, stable, relative names:
-#   <JoltPhysics.js repo root>  ->  JoltPhysics.js/
-#   <JoltPhysics C++ repo root> ->  JoltPhysics/
+# We do two things together:
+#
+# 1. `-fdebug-prefix-map=<absolute>=<short>` rewrites the FILENAME portion of
+#    DWARF entries so each translation unit records a stable, relative-looking
+#    name instead of the host's absolute path:
+#      <JoltPhysics.js repo root>  ->  JoltPhysics.js/
+#      <JoltPhysics C++ repo root> ->  JoltPhysics/
+#
+# 2. `-fdebug-compilation-dir=.` overrides DW_AT_comp_dir (the compile-unit
+#    directory) so it records as "." instead of the absolute CMake binary
+#    directory (e.g. /home/runner/.../_deps/joltphysics-build/). DevTools
+#    concatenates DW_AT_comp_dir + filename before path-substitution lookup,
+#    so without this the absolute build dir leaks even when filenames are
+#    cleanly rewritten, and downstream consumers see Frankenpaths like
+#    `<runner-abs>/_deps/joltphysics-build/JoltPhysics/Jolt/Physics/Foo.cpp`.
+#    With both flags, DWARF entries look like `./JoltPhysics/Jolt/...` and the
+#    extension's "workspace folder" matching finds them via filename alone.
+#
 # A developer who keeps both clones as siblings (e.g. C:/dev/JoltPhysics.js and
-# C:/dev/JoltPhysics) and adds the parent folder (C:/dev) as a workspace folder in
-# the DWARF extension gets line-level stepping with zero manual path mapping.
+# C:/dev/JoltPhysics) and adds the parent folder (C:/dev) as a workspace folder
+# in the DWARF extension gets line-level stepping with zero manual path mapping.
 #
 # Notes:
-# * -fdebug-prefix-map rewrites paths in DWARF only (does not change __FILE__).
+# * `-fdebug-prefix-map` and `-fdebug-compilation-dir` rewrite paths in DWARF
+#   only (do not change __FILE__).
 # * Flags are applied to (a) the Jolt CMake target (compiles Jolt/**.cpp), (b)
-#   EMCC_GLUE_ARGS (compiles generated glue.cpp), and (c) EMCC_ARGS (the emcc link
-#   step, where some DWARF tables are stitched together).
+#   EMCC_GLUE_ARGS (compiles generated glue.cpp), and (c) EMCC_ARGS (the emcc
+#   link step, where some DWARF tables are stitched together).
 # * Longer/more-specific paths must come first; "JoltPhysics.js" is a strict
 #   superstring of "JoltPhysics", so put the JS repo mapping first to avoid the
 #   shorter prefix swallowing it.
@@ -188,7 +204,8 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JoltPhysics_SOURCE_DIR}"   ABSOLUTE)
 	set(JPH_DEBUG_PREFIX_MAP_FLAGS
 		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
-		"-fdebug-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics")
+		"-fdebug-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
+		"-fdebug-compilation-dir=.")
 	if (TARGET Jolt)
 		target_compile_options(Jolt PRIVATE ${JPH_DEBUG_PREFIX_MAP_FLAGS})
 	endif()

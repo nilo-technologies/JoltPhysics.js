@@ -102,7 +102,7 @@ Install the **C/C++ DevTools Support (DWARF)** extension. Open its options, and 
 | `JoltPhysics.js/` | `C:\dev\JoltPhysics.js\` |
 | `JoltPhysics/`    | `C:\dev\JoltPhysics\` |
 
-These work for both local-iter builds **and** the published debug package — `CMakeLists.txt` uses `-fdebug-prefix-map` so DWARF stores those relative roots regardless of build host (CI, your workstation, anyone else's).
+These work for both local-iter builds **and** the published debug package — `CMakeLists.txt` uses `-fdebug-prefix-map` (rewrites the filename portion to those relative roots) plus `-fdebug-compilation-dir=.` (overrides DW_AT_comp_dir so DWARF doesn't also leak the absolute CMake binary directory). Combined, DWARF records portable paths regardless of build host (CI, your workstation, anyone else's), and the substitutions above resolve them on any machine.
 
 ## Publishing to GitHub Packages
 
