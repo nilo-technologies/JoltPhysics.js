@@ -196,15 +196,30 @@ FetchContent_MakeAvailable(JoltPhysics)
 # * Flags are applied to (a) the Jolt CMake target (compiles Jolt/**.cpp), (b)
 #   EMCC_GLUE_ARGS (compiles generated glue.cpp), and (c) EMCC_ARGS (the emcc
 #   link step, where some DWARF tables are stitched together).
-# * Longer/more-specific paths must come first; "JoltPhysics.js" is a strict
-#   superstring of "JoltPhysics", so put the JS repo mapping first to avoid the
-#   shorter prefix swallowing it.
+# * Longest/most-specific SOURCE prefix must come first. `-fdebug-prefix-map` rules
+#   apply left-to-right with first-match-wins semantics, so if a shorter source
+#   prefix is listed first it will eat the path before the longer one can match.
+#
+#   In CI, JoltPhysics is checked out INSIDE the JoltPhysics.js workspace as
+#   `<ws>/JoltPhysics/`, so the JS-repo absolute path is a strict prefix of the
+#   C++-repo absolute path. The C++-repo rule MUST be listed first or all Jolt
+#   source paths end up nested as `JoltPhysics.js/JoltPhysics/Jolt/...` (the JS
+#   rule rewrote the `<ws>` portion and the C++ rule never ran). The earlier
+#   version of this comment had it backwards.
+# * We also pair `-fdebug-prefix-map` with `-fmacro-prefix-map` (same syntax) so
+#   `__FILE__` expansions in JPH_ASSERT/etc. capture the relative path, not the
+#   build-host absolute path. Without this, ~hundreds of runtime path strings
+#   leak into the wasm even though DWARF itself is clean.
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	get_filename_component(JPH_PREFIX_MAP_JS_REPO  "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JoltPhysics_SOURCE_DIR}"   ABSOLUTE)
 	set(JPH_DEBUG_PREFIX_MAP_FLAGS
-		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
+		# C++ repo first because in CI it sits INSIDE the JS repo (nested workspace)
+		# and would otherwise be eaten by the JS-repo rule. Do not reorder.
 		"-fdebug-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
+		"-fmacro-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
+		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
+		"-fmacro-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
 		"-fdebug-compilation-dir=.")
 	if (TARGET Jolt)
 		target_compile_options(Jolt PRIVATE ${JPH_DEBUG_PREFIX_MAP_FLAGS})
