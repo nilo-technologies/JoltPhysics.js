@@ -160,6 +160,21 @@ else()
 endif()
 FetchContent_MakeAvailable(JoltPhysics)
 
+# FetchContent lowercases the dependency name for populated *_SOURCE_DIR variables:
+# ``joltphysics_SOURCE_DIR`` for ``FetchContent_Declare(JoltPhysics ...)``, not
+# ``JoltPhysics_SOURCE_DIR``. Using the wrong variable name breaks Linux CI: the
+# C++ prefix map never matches, the JS map applies first to paths like
+# ``.../JoltPhysics.js/JoltPhysics/Jolt/...``, and DWARF ends up with the broken
+# nested prefix ``JoltPhysics.js/JoltPhysics/...`` (Chrome then resolves sources
+# under the JoltPhysics.js repo clone instead of the sibling JoltPhysics C++ tree).
+if(DEFINED joltphysics_SOURCE_DIR AND NOT "${joltphysics_SOURCE_DIR}" STREQUAL "")
+	set(JPH_JOLT_PHYSICS_SOURCE_ROOT "${joltphysics_SOURCE_DIR}")
+elseif(DEFINED JoltPhysics_SOURCE_DIR AND NOT "${JoltPhysics_SOURCE_DIR}" STREQUAL "")
+	set(JPH_JOLT_PHYSICS_SOURCE_ROOT "${JoltPhysics_SOURCE_DIR}")
+else()
+	message(FATAL_ERROR "FetchContent: expected joltphysics_SOURCE_DIR after MakeAvailable(JoltPhysics)")
+endif()
+
 # Nilo fork: portable DWARF source paths for in-browser C++ debugging.
 #
 # Without this, DWARF records absolute build-host paths (e.g.
@@ -201,18 +216,19 @@ FetchContent_MakeAvailable(JoltPhysics)
 #   prefix is listed first it will eat the path before the longer one can match.
 #
 #   In CI, JoltPhysics is checked out INSIDE the JoltPhysics.js workspace as
-#   `<ws>/JoltPhysics/`, so the JS-repo absolute path is a strict prefix of the
+#   ``<ws>/JoltPhysics/``, so the JS-repo absolute path is a strict prefix of the
 #   C++-repo absolute path. The C++-repo rule MUST be listed first or all Jolt
-#   source paths end up nested as `JoltPhysics.js/JoltPhysics/Jolt/...` (the JS
-#   rule rewrote the `<ws>` portion and the C++ rule never ran). The earlier
-#   version of this comment had it backwards.
+#   source paths end up nested as ``JoltPhysics.js/JoltPhysics/Jolt/...``.
+#   Separately, the C++ rule only works if ``JPH_PREFIX_MAP_CPP_REPO`` is taken
+#   from ``joltphysics_SOURCE_DIR`` (FetchContent's actual variable name), not
+#   ``JoltPhysics_SOURCE_DIR`` (often unset on Linux).
 # * We also pair `-fdebug-prefix-map` with `-fmacro-prefix-map` (same syntax) so
 #   `__FILE__` expansions in JPH_ASSERT/etc. capture the relative path, not the
 #   build-host absolute path. Without this, ~hundreds of runtime path strings
 #   leak into the wasm even though DWARF itself is clean.
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	get_filename_component(JPH_PREFIX_MAP_JS_REPO  "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
-	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JoltPhysics_SOURCE_DIR}"   ABSOLUTE)
+	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JPH_JOLT_PHYSICS_SOURCE_ROOT}" ABSOLUTE)
 	set(JPH_DEBUG_PREFIX_MAP_FLAGS
 		# C++ repo first because in CI it sits INSIDE the JS repo (nested workspace)
 		# and would otherwise be eaten by the JS-repo rule. Do not reorder.
@@ -220,6 +236,11 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 		"-fmacro-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
 		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
 		"-fmacro-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
+		# Belt-and-suspenders: if any TU still records the broken nested prefix (e.g.
+		# mis-cased FetchContent SOURCE_DIR on a host, or a linker merge artifact),
+		# normalize it before ``-fdebug-compilation-dir``.
+		"-fdebug-prefix-map=JoltPhysics.js/JoltPhysics=JoltPhysics"
+		"-fmacro-prefix-map=JoltPhysics.js/JoltPhysics=JoltPhysics"
 		"-fdebug-compilation-dir=.")
 	if (TARGET Jolt)
 		target_compile_options(Jolt PRIVATE ${JPH_DEBUG_PREFIX_MAP_FLAGS})
@@ -329,7 +350,7 @@ set(EMCC_WASM_COMPAT_ARGS ${EMCC_WASM_ARGS}
 
 set(EMCC_GLUE_ARGS
   -c
-  -I${JoltPhysics_SOURCE_DIR}/..
+  -I${JPH_JOLT_PHYSICS_SOURCE_ROOT}/..
   -Wall
   -std=c++17
   -fno-rtti
