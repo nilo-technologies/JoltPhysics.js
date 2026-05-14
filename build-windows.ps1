@@ -3,9 +3,18 @@
     Configure + build JoltPhysics.js on Windows (Emscripten), using a local Jolt core tree instead of FetchContent Git.
 
 .DESCRIPTION
-    Default -BuildType Distribution matches ./build.sh with no args: fast Debug wasm-compat-only (ST+MT) is built
-    first and renamed to debug-*.js, then full Distribution ST+MT (all npm dist outputs), then d.ts shims and
-    Examples/js copy. Resulting dist/ is suitable for a single npm publish (release + debug entrypoints together).
+    Default -BuildType Distribution matches ./build.sh with no args: a fast Debug non-compat preamble (ST only)
+    is built first with -DJPH_OUTPUT_NAME_SUFFIX=.debug so it emits dist\jolt-physics.debug.wasm.js +
+    dist\jolt-physics.debug.wasm.wasm without colliding with the Release outputs; then a full Distribution ST+MT
+    build is run for the standard npm dist outputs; then d.ts shims and Examples/js copy.
+
+    The Nilo fork no longer ships the wasm-compat debug variants (debug-wasm-compat /
+    debug-wasm-compat-multithread). They embed a multi-MB base64 WASM blob in JS, which crashes Chrome DevTools
+    when setting C++ breakpoints (the DWARF extension can't keep all three of: WASM bytes, JS source, and DWARF
+    index resident at once). The non-compat debug build keeps JS glue ~1 MB and exposes WASM as a first-class
+    binary, which DevTools handles natively.
+
+    The resulting dist/ is suitable for a single npm publish (release + debug entrypoints together).
 
 .PARAMETER JoltPhysicsPath
     Path to the JoltPhysics C++ repo root (folder containing Build/). Passed to CMake as -DJOLT_PHYSICS_PATH=...
@@ -13,7 +22,8 @@
 
 .PARAMETER BuildType
     Distribution (default), Release, or Debug - same primary CMAKE_BUILD_TYPE as ./build.sh $1.
-    Debug skips the wasm-compat-only preamble (same as build.sh when BUILD_TYPE=Debug).
+    Debug skips the non-compat debug preamble (same as build.sh when BUILD_TYPE=Debug; the primary build
+    already emits .debug.wasm.* via JPH_OUTPUT_NAME_SUFFIX in that case).
 
 .PARAMETER EmsdkRoot
     emsdk directory containing emsdk_env.ps1. Defaults to $env:EMSDK.
@@ -182,7 +192,8 @@ function Invoke-EmcmakeBuild {
     param(
         [string] $BuildDir,
         [string] $CMakeBuildType,
-        [string[]] $ExtraCmakeArgs
+        [string[]] $ExtraCmakeArgs,
+        [string] $Target = ""
     )
     Write-Host "Configure $BuildDir (CMAKE_BUILD_TYPE=$CMakeBuildType) ..."
     $cmakeArgs = @(
@@ -192,7 +203,11 @@ function Invoke-EmcmakeBuild {
         "-DCMAKE_BUILD_TYPE=$CMakeBuildType"
     ) + $ExtraCmakeArgs + $script:joltCommonArgs
     & emcmake cmake @cmakeArgs
-    cmake --build $BuildDir --parallel
+    $buildArgs = @("--build", $BuildDir, "--parallel")
+    if (-not [string]::IsNullOrEmpty($Target)) {
+        $buildArgs += @("--target", $Target)
+    }
+    cmake @buildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "cmake --build failed for $BuildDir (exit $LASTEXITCODE)"
     }
@@ -207,26 +222,37 @@ try {
     }
     New-Item -ItemType Directory -Path "dist" | Out-Null
 
-    # --- build.sh: when BUILD_TYPE != Debug, fast Debug wasm-compat-only ST+MT, then mv to debug names ---
+    # --- Preamble: Debug non-compat (ST only) so the npm package ships the .debug.wasm.{js,wasm} pair
+    # --- alongside the Release artifacts. JPH_OUTPUT_NAME_SUFFIX=.debug renames CMake's outputs in-place
+    # --- so no Move-Item / sed rewrites are needed. MT debug is intentionally dropped (no consumers).
     if ($BuildType -ne "Debug") {
-        Write-Host "=== Preamble: Debug + BUILD_WASM_COMPAT_ONLY (debug wasm-compat artifacts) ==="
-        Invoke-EmcmakeBuild -BuildDir "Build/Debug/ST" -CMakeBuildType "Debug" -ExtraCmakeArgs @("-DBUILD_WASM_COMPAT_ONLY=ON")
-        Invoke-EmcmakeBuild -BuildDir "Build/Debug/MT" -CMakeBuildType "Debug" -ExtraCmakeArgs @(
-            "-DENABLE_MULTI_THREADING=ON",
-            "-DENABLE_SIMD=ON",
-            "-DBUILD_WASM_COMPAT_ONLY=ON"
-        )
-        if (-not (Test-Path "dist\jolt-physics.wasm-compat.js")) {
-            throw "Preamble did not produce dist\jolt-physics.wasm-compat.js"
+        # Wipe Build\Debug\ST so a previous run's cached BUILD_WASM_COMPAT_ONLY=ON (from the
+        # legacy preamble) cannot poison this fresh non-compat configure. We still pass
+        # BUILD_WASM_COMPAT_ONLY=OFF explicitly as defense-in-depth in case someone passes
+        # a non-empty pre-existing Build dir.
+        if (Test-Path "Build\Debug\ST") {
+            Remove-Item -Recurse -Force "Build\Debug\ST"
         }
-        if (-not (Test-Path "dist\jolt-physics.multithread.wasm-compat.js")) {
-            throw "Preamble did not produce dist\jolt-physics.multithread.wasm-compat.js"
+        Write-Host "=== Preamble: Debug non-compat ST (jolt-physics.debug.wasm.{js,wasm}) ==="
+        # --target jolt-wasm so the preamble doesn't also build jolt-javascript (75 MB debug asm.js
+        # we don't ship) or jolt-wasm-compat (the variant whose DevTools-crash behaviour is the
+        # whole reason this preamble exists). Saves ~30-60 s of closure link time per skipped target.
+        Invoke-EmcmakeBuild -BuildDir "Build/Debug/ST" -CMakeBuildType "Debug" -ExtraCmakeArgs @(
+            "-DBUILD_WASM_COMPAT_ONLY=OFF",
+            "-DJPH_OUTPUT_NAME_SUFFIX=.debug"
+        ) -Target "jolt-wasm"
+        if (-not (Test-Path "dist\jolt-physics.debug.wasm.js")) {
+            throw "Preamble did not produce dist\jolt-physics.debug.wasm.js"
         }
-        Move-Item -Force "dist\jolt-physics.wasm-compat.js" "dist\jolt-physics.debug.wasm-compat.js"
-        Move-Item -Force "dist\jolt-physics.multithread.wasm-compat.js" "dist\jolt-physics.debug.multithread.wasm-compat.js"
+        if (-not (Test-Path "dist\jolt-physics.debug.wasm.wasm")) {
+            throw "Preamble did not produce dist\jolt-physics.debug.wasm.wasm"
+        }
     }
 
     # --- build.sh: full primary CMAKE_BUILD_TYPE ST then MT ---
+    # When -BuildType Debug, this is a developer-convenience mode: every artifact is Debug content
+    # under the Release name, no .debug.* artifacts produced, and dist/ is NOT publish-ready. Use
+    # -BuildType Distribution (default) for a publish-quality dist with both Release + Debug artifacts.
     Write-Host "=== Primary: $BuildType ST + MT (full npm dist) ==="
     Invoke-EmcmakeBuild -BuildDir "Build/$BuildType/ST" -CMakeBuildType $BuildType -ExtraCmakeArgs @()
     Invoke-EmcmakeBuild -BuildDir "Build/$BuildType/MT" -CMakeBuildType $BuildType -ExtraCmakeArgs @(
@@ -234,34 +260,16 @@ try {
         "-DENABLE_SIMD=ON"
     )
 
-    # --- build.sh: when BUILD_TYPE = Debug, cp wasm-compat to debug names ---
-    if ($BuildType -eq "Debug") {
-        Copy-Item -Force "dist\jolt-physics.wasm-compat.js" "dist\jolt-physics.debug.wasm-compat.js"
-        Copy-Item -Force "dist\jolt-physics.multithread.wasm-compat.js" "dist\jolt-physics.debug.multithread.wasm-compat.js"
-    }
-
-    # --- build.sh: sed debug multithread worker URL (always) ---
-    $dbgMt = "dist\jolt-physics.debug.multithread.wasm-compat.js"
-    if (Test-Path -LiteralPath $dbgMt) {
-        $mt = Get-Content -Raw -LiteralPath $dbgMt
-        $mt = $mt -replace "jolt-physics.multithread.wasm-compat.js", "jolt-physics.debug.multithread.wasm-compat.js"
-        Set-Content -NoNewline -Path $dbgMt -Value $mt -Encoding utf8
-    }
-    else {
-        throw "Missing $dbgMt after build (required for npm package)."
-    }
-
-    # --- build.sh: d.ts shims ---
+    # --- d.ts shims (one canonical file, copied to each entrypoint's expected name) ---
     $dts = "import Jolt from ""./types"";`n`nexport default Jolt;`nexport * from ""./types"";`n`n"
     Set-Content -Path "dist\jolt-physics.d.ts" -Value $dts -Encoding utf8
     foreach ($name in @(
             "jolt-physics.wasm.d.ts",
             "jolt-physics.wasm-compat.d.ts",
-            "jolt-physics.debug.wasm-compat.d.ts",
+            "jolt-physics.debug.wasm.d.ts",
             "jolt-physics.multithread.d.ts",
             "jolt-physics.multithread.wasm.d.ts",
-            "jolt-physics.multithread.wasm-compat.d.ts",
-            "jolt-physics.debug.multithread.wasm-compat.d.ts")) {
+            "jolt-physics.multithread.wasm-compat.d.ts")) {
         Copy-Item -Force "dist\jolt-physics.d.ts" "dist\$name"
     }
 
@@ -270,26 +278,48 @@ try {
         Copy-Item -Force "dist\jolt-physics*.wasm-compat.js" $ex
     }
 
-    # Validate dist matches package.json "files" (dist entries + types.d.ts)
+    # Defensive cleanup: drop wasm-compat debug artifacts that older publish builds (<= nilo.2)
+    # produced, and the debug asm.js variant the jolt-javascript target would emit if the Debug
+    # preamble built without --target (we no longer do, but a developer re-running an older
+    # iteration of this script could have left these behind). If they're left in dist/ they don't
+    # ship (not in package.json files), but they confuse `npm pack --dry-run` output.
+    foreach ($stale in @(
+            "dist\jolt-physics.debug.wasm-compat.js",
+            "dist\jolt-physics.debug.wasm-compat.d.ts",
+            "dist\jolt-physics.debug.multithread.wasm-compat.js",
+            "dist\jolt-physics.debug.multithread.wasm-compat.d.ts",
+            "dist\jolt-physics.debug.js",
+            "dist\jolt-physics.debug.d.ts")) {
+        if (Test-Path -LiteralPath $stale) {
+            Write-Host "Cleanup: removing stale $stale (no longer shipped)"
+            Remove-Item -Force -LiteralPath $stale
+        }
+    }
+
+    # Validate dist matches package.json "files" (dist entries + types.d.ts).
+    # Debug-named artifacts only exist when a Debug-non-compat preamble ran (i.e. BuildType != Debug).
     $requiredDist = @(
         "dist\jolt-physics.js",
         "dist\jolt-physics.d.ts",
         "dist\jolt-physics.wasm-compat.js",
         "dist\jolt-physics.wasm-compat.d.ts",
-        "dist\jolt-physics.debug.wasm-compat.js",
-        "dist\jolt-physics.debug.wasm-compat.d.ts",
         "dist\jolt-physics.wasm.js",
         "dist\jolt-physics.wasm.d.ts",
         "dist\jolt-physics.wasm.wasm",
         "dist\jolt-physics.multithread.wasm-compat.js",
         "dist\jolt-physics.multithread.wasm-compat.d.ts",
-        "dist\jolt-physics.debug.multithread.wasm-compat.js",
-        "dist\jolt-physics.debug.multithread.wasm-compat.d.ts",
         "dist\jolt-physics.multithread.wasm.js",
         "dist\jolt-physics.multithread.wasm.d.ts",
         "dist\jolt-physics.multithread.wasm.wasm",
         "dist\types.d.ts"
     )
+    if ($BuildType -ne "Debug") {
+        $requiredDist += @(
+            "dist\jolt-physics.debug.wasm.js",
+            "dist\jolt-physics.debug.wasm.d.ts",
+            "dist\jolt-physics.debug.wasm.wasm"
+        )
+    }
     $missing = @()
     foreach ($p in $requiredDist) {
         if (-not (Test-Path -LiteralPath $p)) {

@@ -8,7 +8,7 @@ This is Nilo's private fork of `JoltPhysics.js`. We do not merge back upstream; 
 
 ## Repository layout (sibling clones)
 
-The build scripts use a sibling-clone convention. Put these repos in the same parent folder (commonly `C:\dev\`):
+The build scripts use a sibling-clone convention. Put these repos in the same parent folder:
 
 | Folder | Purpose | Repo |
 |---|---|---|
@@ -75,7 +75,7 @@ Why the asymmetry: the wasm-compat single-file format embeds the entire WASM (~3
 
 ### Wiring an iter build into Nilo
 
-One-time, add to `C:\dev\Nilo\.env.local`:
+One-time, add to `C:\dev\Nilo\.env.local`:  
 
 ```env
 NILO_JOLT_LOCAL_DIST=C:/dev/JoltPhysics.js/dist
@@ -86,10 +86,12 @@ Then:
 
 ```powershell
 cd C:\dev\Nilo
-pnpm dev:jolt-debug     # NILO_JOLT_DEBUG=true; use `pnpm dev` for Release iter
+pnpm dev    # Vite reads NILO_JOLT_DEBUG / NILO_JOLT_LOCAL_DIST from .env.local
 ```
 
 `vite.config.js` re-aliases `jolt-physics` on dev-server start, disables `optimizeDeps` for it, and extends `server.fs.allow` so the `.wasm.wasm` sidecar fetch works. Subsequent re-runs of `iter-build-windows.ps1` do **not** require a Vite restart — just hard-refresh the browser tab.
+
+`NILO_JOLT_LOCAL_DIST` is the source of truth for the local-iter loop. When it's set, the admin-only "Debug" toggle in Nilo's Dev Menu → Physics auto-hides (it would otherwise race with the env var). For the **published-package** flow (no `NILO_JOLT_LOCAL_DIST`), flipping that toggle dynamic-imports `jolt-physics/debug-wasm` from `node_modules` instead of the Release entrypoint, so debug bytes are only downloaded when explicitly requested.
 
 ### C++ source resolution in Chrome DevTools
 
@@ -101,18 +103,6 @@ Install the **C/C++ DevTools Support (DWARF)** extension. Open its options, and 
 | `JoltPhysics/`    | `C:\dev\JoltPhysics\` |
 
 These work for both local-iter builds **and** the published debug package — `CMakeLists.txt` uses `-fdebug-prefix-map` so DWARF stores those relative roots regardless of build host (CI, your workstation, anyone else's).
-
-## Publish-quality build (local)
-
-For a full multi-variant build matching what CI produces (Distribution ST + MT + wasm-compat + asm, all 7 flavours):
-
-```powershell
-# from C:\dev\JoltPhysics.js
-.\build-windows.ps1                       # default: Distribution + fast Debug wasm-compat
-.\build-windows.ps1 -BuildType Debug      # Debug-only (faster, full DWARF + assertions)
-```
-
-This is the Windows equivalent of upstream's `./build.sh`. It checks out `$env:NILO_JOLT_TAG` (default `nilo-v5.5.0`) in **both** the `JoltPhysics.js` and `JoltPhysics` clones before configuring, so the build matches a known pair. Outputs land in `dist\` ready for `npm pack` / `npm publish`.
 
 ## Publishing to GitHub Packages
 
@@ -133,31 +123,13 @@ Publishing is **CI-only**. Don't `npm publish` from a workstation.
 3. **Trigger the workflow:** GitHub → **Actions** → **Build and Deploy** → **Run workflow**.
    * Leave **dry run** ON to produce a `jolt-physics-dist` artifact for inspection without publishing.
    * Turn **dry run** OFF to publish. The Action also creates a **GitHub Release** with the `dist/` tarball attached — handy for symbolication and pinning old debug bundles.
-4. **First publish only:** the package starts Private. Open the [organisation packages page](https://github.com/orgs/nilo-technologies/packages), find `jolt-physics`, and set visibility to Public. Subsequent publishes inherit the same visibility.
 
 ## Consuming the package from Nilo
 
-The published artifacts are wired into the Nilo client (`C:\dev\Nilo`) via:
+The published artifacts are wired into the Nilo client via:
 
 * Root `package.json` and `packages/physics-with-jolt/package.json` alias `jolt-physics` → `npm:@nilo-technologies/jolt-physics@5.5.0-nilo.N`. Bump both when you publish.
 * Root `.npmrc` maps `@nilo-technologies` → `https://npm.pkg.github.com`.
-* For local install you need a **classic** GitHub personal access token with `read:packages` scope. Fine-grained tokens are flaky against GitHub Packages — stick to classic. One-time per machine:
-  ```powershell
-  pnpm config set //npm.pkg.github.com/:_authToken=ghp_xxx --location user
-  ```
-  Authorize the token for the `nilo-technologies` SAML org.
-
-For a one-off package swap experiment (rare — `NILO_JOLT_LOCAL_DIST` is the preferred local-dev path because it doesn't touch lockfiles):
-
-```powershell
-cd C:\dev\Nilo
-just link-jolt-local-sibling    # pnpm-link jolt-physics -> ..\JoltPhysics.js
-just unlink-jolt-local          # restore the published version
-```
-
-Don't commit `package.json` / `pnpm-lock.yaml` while linked.
-
----
 
 # JoltPhysics.js (upstream README)
 
@@ -171,13 +143,12 @@ Go to the [demos page](https://jrouwe.github.io/JoltPhysics.js/) to see the proj
 
 ## Using
 
-This library comes in 7 flavours:
+This library comes in 6 flavours:
 - `wasm-compat` - A WASM version with the WASM file (encoded in base64) embedded in the bundle
-- `debug-wasm-compat` - Same as `wasm-compat` but with debug checking enabled (outputs errors to the console and enables the debug renderer).
 - `wasm` - A WASM version with a separate WASM file
+- `debug-wasm` - Same as `wasm` (separate `.wasm` sidecar) but compiled with DWARF + assertions for C++ source-level debugging. The Nilo fork dropped the upstream `debug-wasm-compat` flavour because the giant base64 WASM string embedded in JS crashed Chrome DevTools when setting C++ breakpoints; non-compat keeps JS glue ~1 MB and exposes the WASM as a first-class binary that the C/C++ DWARF extension handles natively.
 - `asm` - A JavaScript version that uses [asm.js](https://developer.mozilla.org/en-US/docs/Games/Tools/asm.js)
 - `wasm-compat-multithread` - Same as `wasm-compat` but with multi threading enabled.
-- `debug-wasm-compat-multithread` - Same as `wasm-compat-multithread` but with debug checking enabled (outputs errors to the console and enables the debug renderer).
 - `wasm-multithread` - Same as `wasm` but with multi threading enabled.
 
 See [falling_shapes.html](Examples/falling_shapes.html) for an example on how to use the library.
@@ -226,20 +197,17 @@ The different flavours are available via entrypoints on the npm package:
 import Jolt from '@nilo-technologies/jolt-physics';
 import Jolt from '@nilo-technologies/jolt-physics/wasm-compat';
 
-// WASM embedded in the bundle, debug checking enabled (outputs errors to the console and enables the debug renderer)
-import Jolt from '@nilo-technologies/jolt-physics/debug-wasm-compat';
-
 // WASM
 import Jolt from '@nilo-technologies/jolt-physics/wasm';
+
+// WASM with DWARF + assertions for C++ source-level debugging (separate .wasm sidecar)
+import Jolt from '@nilo-technologies/jolt-physics/debug-wasm';
 
 // asm.js
 import Jolt from '@nilo-technologies/jolt-physics/asm';
 
 // WASM embedded in the bundle, multithread enabled
 import Jolt from '@nilo-technologies/jolt-physics/wasm-compat-multithread';
-
-// WASM embedded in the bundle, multithread enabled, debug checking enabled (outputs errors to the console and enables the debug renderer)
-import Jolt from '@nilo-technologies/jolt-physics/debug-wasm-compat-multithread';
 
 // WASM, multithread enabled
 import Jolt from '@nilo-technologies/jolt-physics/wasm-multithread';

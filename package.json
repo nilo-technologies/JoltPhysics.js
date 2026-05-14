@@ -1,6 +1,6 @@
 {
 	"name": "@nilo-technologies/jolt-physics",
-	"version": "5.5.0-nilo.2",
+	"version": "5.5.0-nilo.3",
 	"description": "A WebAssembly port of JoltPhysics, a rigid body physics and collision detection library, suitable for games and VR applications",
 	"type": "module",
 	"main": "dist/jolt-physics.wasm-compat.js",
@@ -18,9 +18,9 @@
 			"types": "./dist/jolt-physics.wasm-compat.d.ts",
 			"default": "./dist/jolt-physics.wasm-compat.js"
 		},
-		"./debug-wasm-compat": {
-			"types": "./dist/jolt-physics.debug.wasm-compat.d.ts",
-			"default": "./dist/jolt-physics.debug.wasm-compat.js"
+		"./debug-wasm": {
+			"types": "./dist/jolt-physics.debug.wasm.d.ts",
+			"default": "./dist/jolt-physics.debug.wasm.js"
 		},
 		"./asm": {
 			"types": "./dist/jolt-physics.d.ts",
@@ -34,11 +34,8 @@
 			"types": "./dist/jolt-physics.multithread.wasm-compat.d.ts",
 			"default": "./dist/jolt-physics.multithread.wasm-compat.js"
 		},
-		"./debug-wasm-compat-multithread": {
-			"types": "./dist/jolt-physics.debug.multithread.wasm-compat.d.ts",
-			"default": "./dist/jolt-physics.debug.multithread.wasm-compat.js"
-		},
 		"./jolt-physics.wasm.wasm": "./dist/jolt-physics.wasm.wasm",
+		"./jolt-physics.debug.wasm.wasm": "./dist/jolt-physics.debug.wasm.wasm",
 		"./jolt-physics.multithread.wasm.wasm": "./dist/jolt-physics.multithread.wasm.wasm",
 		"./package.json": "./package.json"
 	},
@@ -64,15 +61,14 @@
 		"./dist/jolt-physics.d.ts",
 		"./dist/jolt-physics.wasm-compat.js",
 		"./dist/jolt-physics.wasm-compat.d.ts",
-		"./dist/jolt-physics.debug.wasm-compat.js",
-		"./dist/jolt-physics.debug.wasm-compat.d.ts",
 		"./dist/jolt-physics.wasm.js",
 		"./dist/jolt-physics.wasm.d.ts",
 		"./dist/jolt-physics.wasm.wasm",
+		"./dist/jolt-physics.debug.wasm.js",
+		"./dist/jolt-physics.debug.wasm.d.ts",
+		"./dist/jolt-physics.debug.wasm.wasm",
 		"./dist/jolt-physics.multithread.wasm-compat.js",
 		"./dist/jolt-physics.multithread.wasm-compat.d.ts",
-		"./dist/jolt-physics.debug.multithread.wasm-compat.js",
-		"./dist/jolt-physics.debug.multithread.wasm-compat.d.ts",
 		"./dist/jolt-physics.multithread.wasm.js",
 		"./dist/jolt-physics.multithread.wasm.d.ts",
 		"./dist/jolt-physics.multithread.wasm.wasm",
@@ -80,10 +76,9 @@
 		"asm",
 		"wasm",
 		"wasm-compat",
-		"debug-wasm-compat",
+		"debug-wasm",
 		"wasm-multithread",
-		"wasm-compat-multithread",
-		"debug-wasm-compat-multithread"
+		"wasm-compat-multithread"
 	],
 	"keywords": [
 		"physics",

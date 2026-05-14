@@ -276,7 +276,8 @@ try {
 
     $totalSizeMb = [Math]::Round((($expectedFiles | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum) / 1MB, 1)
     $distUrl = "$($here -replace '\\', '/')/dist"
-    $pnpmCmd = if ($Variant -eq "Debug") { "pnpm dev:jolt-debug" } else { "pnpm dev" }
+    # `pnpm dev` always; the Variant is picked up from .env.local via NILO_JOLT_DEBUG, not a script alias.
+    $pnpmCmd = "pnpm dev"
     $aliasTarget = Split-Path -Leaf $primaryOutFile
     $closureStatus = if ($FastLink) {
         if ($Variant -eq "Debug") {

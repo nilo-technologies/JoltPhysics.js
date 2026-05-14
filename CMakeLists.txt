@@ -101,6 +101,16 @@ else()
 		"${Python3_EXECUTABLE}" "${JOLT_BUILD_TOOLS}" strip-thread-local glue.cpp)
 endif()
 
+# Optional suffix injected into dist/ artifact basenames so a single dist/ folder can hold
+# both Release-named and Debug-named artifacts side-by-side after a publish build (e.g.
+# jolt-physics.wasm.js + jolt-physics.debug.wasm.js). build-windows.ps1 / build.sh pass
+# -DJPH_OUTPUT_NAME_SUFFIX=.debug for the Debug preamble; iter-build leaves this empty so
+# Debug iter outputs keep the plain .wasm.js filename Vite's local-iter alias expects.
+if (NOT DEFINED JPH_OUTPUT_NAME_SUFFIX)
+	set(JPH_OUTPUT_NAME_SUFFIX "")
+endif()
+set(OUTPUT_BASE_NAME "${OUTPUT_BASE_NAME}${JPH_OUTPUT_NAME_SUFFIX}")
+
 # Replace 'replace_by_import' by 'import' in the generated JS code to workaround a bug in emscripten
 # See: https://github.com/jrouwe/JoltPhysics.js/issues/245
 # Use Python so Windows builds do not require sed.
