@@ -22,6 +22,10 @@ mkdir dist
 # Wipe Build/Debug/ST so a previous run's cached BUILD_WASM_COMPAT_ONLY=ON (from the legacy
 # preamble) cannot poison this fresh non-compat configure. We also pass BUILD_WASM_COMPAT_ONLY=OFF
 # explicitly as defense-in-depth in case someone passes a non-empty pre-existing Build dir.
+#
+# Pass ``--verbose`` to ``cmake --build`` (forwards to Ninja ``-v``) only when you need the full
+# ``em++`` command line in CI logs (prefix maps, include flags, etc.). It bloats logs by ~20x;
+# leave it off for routine publishes.
 if [ $BUILD_TYPE != "Debug" ]
 then
 	rm -rf Build/Debug/ST

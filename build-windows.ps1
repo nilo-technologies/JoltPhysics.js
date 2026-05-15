@@ -203,7 +203,8 @@ function Invoke-EmcmakeBuild {
         "-DCMAKE_BUILD_TYPE=$CMakeBuildType"
     ) + $ExtraCmakeArgs + $script:joltCommonArgs
     & emcmake cmake @cmakeArgs
-    $buildArgs = @("--build", $BuildDir, "--parallel")
+    # ``--verbose`` -> Ninja ``-v``: full ``em++`` lines in logs (large). Remove when done investigating.
+    $buildArgs = @("--build", $BuildDir, "--parallel", "--verbose")
     if (-not [string]::IsNullOrEmpty($Target)) {
         $buildArgs += @("--target", $Target)
     }

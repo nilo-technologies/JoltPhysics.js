@@ -53,13 +53,29 @@ jobs:
         echo "::error::Ref '${JOLT_REF}' not found on ${URL} as a tag or branch. Push it (e.g. git push origin ${JOLT_REF}) or re-run with jolt_ref=master until tags are published."
         exit 1
 
-    - name: Checkout Jolt (C++)
-      uses: actions/checkout@v6
-      with:
-        repository: nilo-technologies/JoltPhysics
-        ref: ${{ env.JOLT_PHYSICS_CHECKOUT_REF }}
-        path: JoltPhysics
-        fetch-depth: 0
+    # NOTE: deliberately NOT using actions/checkout for the C++ repo. We need the
+    # JoltPhysics clone to live OUTSIDE $GITHUB_WORKSPACE so its absolute path is
+    # not a strict suffix-of-prefix of the JoltPhysics.js workspace path. Otherwise
+    # Clang's -fdebug-prefix-map (which stores rules in a sorted container, not
+    # command-line order) applies the JS-repo rule to Jolt sources first, producing
+    # nested ``JoltPhysics.js/JoltPhysics/Jolt/...`` paths in DWARF that no
+    # downstream consumer can resolve. Cloning into $RUNNER_TEMP gives us
+    # /home/runner/_work/_temp/JoltPhysics which sits next to (not inside)
+    # /home/runner/work/JoltPhysics.js/JoltPhysics.js, so the two -fdebug-prefix-map
+    # source prefixes don't nest and each rule maps the correct files.
+    - name: Checkout Jolt (C++) outside workspace
+      env:
+        JOLT_REF: ${{ env.JOLT_PHYSICS_CHECKOUT_REF }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        TARGET="${RUNNER_TEMP}/JoltPhysics"
+        rm -rf "${TARGET}"
+        git clone --depth=1 --branch "${JOLT_REF}" \
+          https://github.com/nilo-technologies/JoltPhysics "${TARGET}"
+        test -f "${TARGET}/Build/CMakeLists.txt" || { echo "::error::Missing Build/CMakeLists.txt in ${TARGET}"; exit 1; }
+        echo "JoltPhysics checked out at: ${TARGET}"
+        echo "Head: $(git -C "${TARGET}" rev-parse HEAD)"
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
@@ -72,8 +88,9 @@ jobs:
       run: ./ci/build-examples.sh
       shell: bash
       env:
-        # ci/build-examples.sh passes this as -DJOLT_PHYSICS_PATH so the job uses the checkout above (not FetchContent).
-        NILO_CI_JOLT_PHYSICS_PATH: ${{ github.workspace }}/JoltPhysics
+        # ci/build-examples.sh passes this as -DJOLT_PHYSICS_PATH so the job uses
+        # the sibling clone above (not FetchContent, not a workspace subdir).
+        NILO_CI_JOLT_PHYSICS_PATH: ${{ runner.temp }}/JoltPhysics
 
     - name: Deploy Examples
       if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true' }}
