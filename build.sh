@@ -22,18 +22,22 @@ mkdir dist
 # Wipe Build/Debug/ST so a previous run's cached BUILD_WASM_COMPAT_ONLY=ON (from the legacy
 # preamble) cannot poison this fresh non-compat configure. We also pass BUILD_WASM_COMPAT_ONLY=OFF
 # explicitly as defense-in-depth in case someone passes a non-empty pre-existing Build dir.
+#
+# ``cmake --build … --verbose`` forwards to Ninja ``-v`` so CI / local logs show the full ``em++``
+# command line (prefix maps, includes, etc.). Logs get very large; drop ``--verbose`` again once
+# you are done investigating.
 if [ $BUILD_TYPE != "Debug" ]
 then
 	rm -rf Build/Debug/ST
 	cmake -B Build/Debug/ST -DCMAKE_BUILD_TYPE=Debug -DBUILD_WASM_COMPAT_ONLY=OFF -DJPH_OUTPUT_NAME_SUFFIX=.debug "${@}"
-	cmake --build Build/Debug/ST -j`nproc`
+	cmake --build Build/Debug/ST -j`nproc` --verbose
 fi
 
 cmake -B Build/$BUILD_TYPE/ST -DCMAKE_BUILD_TYPE=$BUILD_TYPE "${@}"
-cmake --build Build/$BUILD_TYPE/ST -j`nproc`
+cmake --build Build/$BUILD_TYPE/ST -j`nproc` --verbose
 
 cmake -B Build/$BUILD_TYPE/MT -DENABLE_MULTI_THREADING=ON -DENABLE_SIMD=ON -DCMAKE_BUILD_TYPE=$BUILD_TYPE "${@}"
-cmake --build Build/$BUILD_TYPE/MT -j`nproc`
+cmake --build Build/$BUILD_TYPE/MT -j`nproc` --verbose
 
 cat > ./dist/jolt-physics.d.ts << EOF
 import Jolt from "./types";
