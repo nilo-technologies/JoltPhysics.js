@@ -167,7 +167,18 @@ FetchContent_MakeAvailable(JoltPhysics)
 # ``.../JoltPhysics.js/JoltPhysics/Jolt/...``, and DWARF ends up with the broken
 # nested prefix ``JoltPhysics.js/JoltPhysics/...`` (Chrome then resolves sources
 # under the JoltPhysics.js repo clone instead of the sibling JoltPhysics C++ tree).
-if(DEFINED joltphysics_SOURCE_DIR AND NOT "${joltphysics_SOURCE_DIR}" STREQUAL "")
+#
+# When ``-DJOLT_PHYSICS_PATH=...`` is set (CI: ``NILO_CI_JOLT_PHYSICS_PATH``), always
+# take the C++ repo root from that cache variable. FetchContent's
+# ``joltphysics_SOURCE_DIR`` has been observed to equal the JS workspace root on
+# Linux while Ninja still compiles ``Jolt/**.cpp`` from the sibling checkout; the
+# C++ ``-fdebug-prefix-map`` must use the same absolute prefix as the compile paths.
+if(JOLT_PHYSICS_PATH)
+	get_filename_component(JPH_JOLT_PHYSICS_SOURCE_ROOT "${JOLT_PHYSICS_PATH}" ABSOLUTE)
+	if(NOT EXISTS "${JPH_JOLT_PHYSICS_SOURCE_ROOT}/Jolt/Jolt.h")
+		message(FATAL_ERROR "JOLT_PHYSICS_PATH must be the JoltPhysics C++ repo root (expected Jolt/Jolt.h): ${JPH_JOLT_PHYSICS_SOURCE_ROOT}")
+	endif()
+elseif(DEFINED joltphysics_SOURCE_DIR AND NOT "${joltphysics_SOURCE_DIR}" STREQUAL "")
 	set(JPH_JOLT_PHYSICS_SOURCE_ROOT "${joltphysics_SOURCE_DIR}")
 elseif(DEFINED JoltPhysics_SOURCE_DIR AND NOT "${JoltPhysics_SOURCE_DIR}" STREQUAL "")
 	set(JPH_JOLT_PHYSICS_SOURCE_ROOT "${JoltPhysics_SOURCE_DIR}")
