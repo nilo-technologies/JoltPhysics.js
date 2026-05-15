@@ -175,6 +175,21 @@ else()
 	message(FATAL_ERROR "FetchContent: expected joltphysics_SOURCE_DIR after MakeAvailable(JoltPhysics)")
 endif()
 
+# Canonical C++ repo root: upstream Jolt sets ``PHYSICS_REPO_ROOT`` to
+# ``${CMAKE_CURRENT_SOURCE_DIR}/../`` from ``Build/CMakeLists.txt``, which Ninja
+# often emits as ``-I.../JoltPhysics/Build/..``. Glue uses ``-I`` on
+# ``joltphysics_SOURCE_DIR`` (normalized clone root). That spelling mismatch can
+# interact badly with ``-fdebug-prefix-map`` / DWARF. Force the ``Jolt`` target to
+# prefer the same absolute root as glue and prefix maps (REALPATH collapses ``..``).
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.19")
+	get_filename_component(JPH_JOLT_PHYSICS_SOURCE_ROOT "${JPH_JOLT_PHYSICS_SOURCE_ROOT}" REALPATH)
+else()
+	get_filename_component(JPH_JOLT_PHYSICS_SOURCE_ROOT "${JPH_JOLT_PHYSICS_SOURCE_ROOT}" ABSOLUTE)
+endif()
+if(TARGET Jolt)
+	target_include_directories(Jolt BEFORE PUBLIC "$<BUILD_INTERFACE:${JPH_JOLT_PHYSICS_SOURCE_ROOT}>")
+endif()
+
 # Nilo fork: portable DWARF source paths for in-browser C++ debugging.
 #
 # Without this, DWARF records absolute build-host paths (e.g.
