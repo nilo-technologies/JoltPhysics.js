@@ -237,36 +237,48 @@ endif()
 # * Flags are applied to (a) the Jolt CMake target (compiles Jolt/**.cpp), (b)
 #   EMCC_GLUE_ARGS (compiles generated glue.cpp), and (c) EMCC_ARGS (the emcc
 #   link step, where some DWARF tables are stitched together).
-# * Longest/most-specific SOURCE prefix must come first. `-fdebug-prefix-map` rules
-#   apply left-to-right with first-match-wins semantics, so if a shorter source
-#   prefix is listed first it will eat the path before the longer one can match.
-#
-#   In CI, JoltPhysics is checked out INSIDE the JoltPhysics.js workspace as
-#   ``<ws>/JoltPhysics/``, so the JS-repo absolute path is a strict prefix of the
-#   C++-repo absolute path. The C++-repo rule MUST be listed first or all Jolt
-#   source paths end up nested as ``JoltPhysics.js/JoltPhysics/Jolt/...``.
-#   Separately, the C++ rule only works if ``JPH_PREFIX_MAP_CPP_REPO`` is taken
-#   from ``joltphysics_SOURCE_DIR`` (FetchContent's actual variable name), not
-#   ``JoltPhysics_SOURCE_DIR`` (often unset on Linux).
-# * We also pair `-fdebug-prefix-map` with `-fmacro-prefix-map` (same syntax) so
+# * IMPORTANT: ``-fdebug-prefix-map`` rule selection is NOT command-line order.
+#   Clang stores entries in a sorted container keyed by source prefix, applies
+#   exactly one rule per path (no chaining), and when two prefixes nest the
+#   shorter one (which sorts first lexicographically) wins. Empirically this
+#   means a JS-workspace prefix that is a strict prefix of the C++ checkout
+#   path will eat all Jolt source paths and produce ``JoltPhysics.js/JoltPhysics/
+#   Jolt/...`` in DWARF regardless of where the C++ rule sits on the command
+#   line. We therefore HARD-REQUIRE that the two repo paths do not nest, and
+#   error out at configure time if they do (CI must clone JoltPhysics outside
+#   $GITHUB_WORKSPACE; locally use sibling clones such as C:/dev/JoltPhysics.js
+#   + C:/dev/JoltPhysics, never a JoltPhysics subdirectory inside the JS repo).
+# * We pair `-fdebug-prefix-map` with `-fmacro-prefix-map` (same syntax) so
 #   `__FILE__` expansions in JPH_ASSERT/etc. capture the relative path, not the
 #   build-host absolute path. Without this, ~hundreds of runtime path strings
 #   leak into the wasm even though DWARF itself is clean.
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 	get_filename_component(JPH_PREFIX_MAP_JS_REPO  "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 	get_filename_component(JPH_PREFIX_MAP_CPP_REPO "${JPH_JOLT_PHYSICS_SOURCE_ROOT}" ABSOLUTE)
+
+	# Hard-fail if the two prefixes nest. See note above: a nested layout breaks
+	# Clang's prefix-map regardless of command-line order, and a silent debug build
+	# with broken DWARF is worse than a configure-time error.
+	string(FIND "${JPH_PREFIX_MAP_CPP_REPO}/" "${JPH_PREFIX_MAP_JS_REPO}/" _jph_cpp_in_js)
+	string(FIND "${JPH_PREFIX_MAP_JS_REPO}/" "${JPH_PREFIX_MAP_CPP_REPO}/" _jph_js_in_cpp)
+	if (NOT _jph_cpp_in_js EQUAL -1 OR NOT _jph_js_in_cpp EQUAL -1)
+		message(FATAL_ERROR
+			"JoltPhysics.js Debug DWARF prefix maps require non-nested repo paths.\n"
+			"  JoltPhysics.js workspace : ${JPH_PREFIX_MAP_JS_REPO}\n"
+			"  JoltPhysics  C++ checkout: ${JPH_PREFIX_MAP_CPP_REPO}\n"
+			"One path is a prefix of the other, so Clang's -fdebug-prefix-map will "
+			"map every Jolt source through the wrong rule and produce broken nested "
+			"paths in DWARF (e.g. JoltPhysics.js/JoltPhysics/Jolt/...). Move the C++ "
+			"checkout to a sibling location (in CI: clone into \$RUNNER_TEMP; "
+			"locally: C:/dev/JoltPhysics + C:/dev/JoltPhysics.js as siblings) or "
+			"pass -DJOLT_PHYSICS_PATH to a non-nested directory.")
+	endif()
+
 	set(JPH_DEBUG_PREFIX_MAP_FLAGS
-		# C++ repo first because in CI it sits INSIDE the JS repo (nested workspace)
-		# and would otherwise be eaten by the JS-repo rule. Do not reorder.
 		"-fdebug-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
 		"-fmacro-prefix-map=${JPH_PREFIX_MAP_CPP_REPO}=JoltPhysics"
 		"-fdebug-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
 		"-fmacro-prefix-map=${JPH_PREFIX_MAP_JS_REPO}=JoltPhysics.js"
-		# Belt-and-suspenders: if any TU still records the broken nested prefix (e.g.
-		# mis-cased FetchContent SOURCE_DIR on a host, or a linker merge artifact),
-		# normalize it before ``-fdebug-compilation-dir``.
-		"-fdebug-prefix-map=JoltPhysics.js/JoltPhysics=JoltPhysics"
-		"-fmacro-prefix-map=JoltPhysics.js/JoltPhysics=JoltPhysics"
 		"-fdebug-compilation-dir=.")
 	if (TARGET Jolt)
 		target_compile_options(Jolt PRIVATE ${JPH_DEBUG_PREFIX_MAP_FLAGS})
