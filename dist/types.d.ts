@@ -154,22 +154,22 @@ export interface Shape extends ClassHandle {
   GetMassProperties(): MassProperties;
   MustBeStatic(): boolean;
   GetRefCount(): number;
-  GetUserData(): number;
-  SetUserData(userData: number): void;
   GetSubShapeIDBitsRecursive(): number;
   GetLeafShape(subShapeID: number): Shape | null;
   GetMaterial(subShapeID: number): PhysicsMaterial | null;
-  GetSubShapeUserData(subShapeID: number): number;
   GetCenterOfMass(out: Vec3): Vec3;
   GetLocalBounds(out: AABox): AABox;
+  GetUserData(): bigint;
+  SetUserData(userData: bigint): void;
+  GetSubShapeUserData(subShapeID: number): bigint;
   IsValidScale(scale: Vec3): boolean;
   MakeScaleValid(scale: Vec3): Vec3;
   ScaleShape(scale: Vec3): ShapeResult;
-  GetSurfaceNormal(out: Vec3, subShapeID: number, localSurfacePosition: Vec3): Vec3;
   GetSubShapeTransformedShape(subShapeID: number, positionCOM: Vec3, rotation: Quat, scale: Vec3): TransformedShape;
-  GetWorldSpaceBounds(out: AABox, comTransform: Mat44, scale: Vec3): AABox;
   GetVolume(): number;
+  GetWorldSpaceBounds(out: AABox, comTransform: Mat44, scale: Vec3): AABox;
   GetInnerRadius(): number;
+  GetSurfaceNormal(out: Vec3, subShapeID: number, localSurfacePosition: Vec3): Vec3;
   GetStats(): { sizeBytes: number; numTriangles: number };
   GetTriangles(): Float32Array;
 }
@@ -352,12 +352,12 @@ export interface EmptyShapeSettings extends ShapeSettings {
 export interface Plane extends ClassHandle {
   GetNormal(out: Vec3): Vec3;
   SetNormal(normal: Vec3): void;
-  ProjectPointOnPlane(out: Vec3, point: Vec3): Vec3;
   Scaled(scale: Vec3): Plane;
   GetTransformed(transform: Mat44): Plane;
   GetConstant(): number;
   SetConstant(constant: number): void;
   SignedDistance(point: Vec3): number;
+  ProjectPointOnPlane(out: Vec3, point: Vec3): Vec3;
   Offset(distance: number): Plane;
 }
 
@@ -397,7 +397,6 @@ export interface TransformedShape extends ClassHandle {
   CastRayCollide(ray: RRayCast, settings: RayCastSettings, collector: CastRayCollector, shapeFilter: ShapeFilter): void;
   SetShape(shape: Shape | null): void;
   GetMaterial(subShapeID: number): PhysicsMaterial | null;
-  GetSubShapeUserData(subShapeID: number): number;
   GetBodyID(): number;
   GetShapeScale(out: Vec3): Vec3;
   GetCenterOfMassTransform(out: Mat44): Mat44;
@@ -406,15 +405,16 @@ export interface TransformedShape extends ClassHandle {
   GetWorldSpaceBounds(out: AABox): AABox;
   GetShapePositionCOM(out: Vec3): Vec3;
   GetShapeRotation(out: Quat): Quat;
+  GetSubShapeUserData(subShapeID: number): bigint;
   CollidePoint(point: Vec3, collector: CollidePointCollector, shapeFilter: ShapeFilter): void;
   CastShape(shapeCast: RShapeCast, settings: ShapeCastSettings, baseOffset: Vec3, collector: CastShapeCollector, shapeFilter: ShapeFilter): void;
   SetShapeScale(scale: Vec3): void;
-  GetWorldSpaceSurfaceNormal(out: Vec3, subShapeID: number, position: Vec3): Vec3;
   SetShapePositionCOM(pos: Vec3): void;
   SetWorldTransform(position: Vec3, rotation: Quat, scale: Vec3): void;
   SetShapeRotation(rot: Quat): void;
   CollideShape(shape: Shape | null, shapeScale: Vec3, comTransform: Mat44, settings: CollideShapeSettings, baseOffset: Vec3, collector: CollideShapeCollector, shapeFilter: ShapeFilter): void;
   SetWorldTransformMat(transform: Mat44): void;
+  GetWorldSpaceSurfaceNormal(out: Vec3, subShapeID: number, position: Vec3): Vec3;
   CastRay(origin: Vec3, direction: Vec3): { fraction: number; point: Vec3 } | null;
   GetSupportingFace(subShapeID: number, direction: Vec3, baseOffset: Vec3): Float32Array;
 }
@@ -720,8 +720,8 @@ export interface BodyInterface extends ClassHandle {
   AddBodiesPrepare(bodyIDsPtr: number, number: number): number;
   AddBodiesFinalize(bodyIDsPtr: number, number: number, addState: number, activationMode: EActivation): void;
   AddBodiesAbort(bodyIDsPtr: number, number: number, addState: number): void;
-  GetPositionAndRotationInto(outPos: number, outRot: number, bodyID: number): void;
-  GetLinearAndAngularVelocityInto(outLin: number, outAng: number, bodyID: number): void;
+  GetPositionAndRotation(outPos: Vec3, outRot: Quat, bodyID: number): [Vec3, Quat];
+  GetLinearAndAngularVelocity(outLin: Vec3, outAng: Vec3, bodyID: number): [Vec3, Vec3];
   GetInverseInertia(out: Mat44, bodyID: number): Mat44;
   GetUserData(bodyID: number): bigint;
   SetUserData(bodyID: number, userData: bigint): void;
@@ -737,7 +737,6 @@ export interface BodyInterface extends ClassHandle {
   AddAngularImpulse(bodyID: number, angularImpulse: Vec3): void;
   AddLinearVelocity(bodyID: number, linearVelocity: Vec3): void;
   SetLinearAndAngularVelocity(bodyID: number, linearVelocity: Vec3, angularVelocity: Vec3): void;
-  GetPointVelocity(out: Vec3, bodyID: number, point: Vec3): Vec3;
   NotifyShapeChanged(bodyID: number, prevCenterOfMass: Vec3, updateMassProperties: boolean, activationMode: EActivation): void;
   AddLinearAndAngularVelocity(bodyID: number, linearVelocity: Vec3, angularVelocity: Vec3): void;
   SetRotation(bodyID: number, rotation: Quat, activationMode: EActivation): void;
@@ -745,6 +744,7 @@ export interface BodyInterface extends ClassHandle {
   SetPositionRotationAndVelocity(bodyID: number, position: Vec3, rotation: Quat, linearVelocity: Vec3, angularVelocity: Vec3): void;
   SetPositionAndRotationWhenChanged(bodyID: number, position: Vec3, rotation: Quat, activationMode: EActivation): void;
   MoveKinematic(bodyID: number, targetPosition: Vec3, targetRotation: Quat, deltaTime: number): void;
+  GetPointVelocity(out: Vec3, bodyID: number, point: Vec3): Vec3;
   GetFriction(bodyID: number): number;
   GetRestitution(bodyID: number): number;
   GetGravityFactor(bodyID: number): number;
@@ -811,7 +811,6 @@ export interface Body extends ClassHandle {
   GetInverseCenterOfMassTransform(out: Mat44): Mat44;
   GetUserData(): bigint;
   SetUserData(userData: bigint): void;
-  GetPointVelocity(out: Vec3, point: Vec3): Vec3;
   SetLinearVelocity(linearVelocity: Vec3): void;
   SetAngularVelocity(angularVelocity: Vec3): void;
   AddForce(force: Vec3): void;
@@ -822,13 +821,14 @@ export interface Body extends ClassHandle {
   SetLinearVelocityClamped(linearVelocity: Vec3): void;
   SetAngularVelocityClamped(angularVelocity: Vec3): void;
   AddAngularImpulse(angularImpulse: Vec3): void;
-  GetWorldSpaceSurfaceNormal(out: Vec3, subShapeID: number, position: Vec3): Vec3;
+  GetPointVelocity(out: Vec3, point: Vec3): Vec3;
   ApplyBuoyancyImpulse(surfacePosition: Vec3, surfaceNormal: Vec3, buoyancy: number, linearDrag: number, angularDrag: number, fluidVelocity: Vec3, gravity: Vec3, deltaTime: number): boolean;
   GetFriction(): number;
   GetRestitution(): number;
   SetFriction(friction: number): void;
   SetRestitution(restitution: number): void;
   MoveKinematic(targetPosition: Vec3, targetRotation: Quat, deltaTime: number): void;
+  GetWorldSpaceSurfaceNormal(out: Vec3, subShapeID: number, position: Vec3): Vec3;
   GetSoftBodyVertices(): Float32Array;
 }
 
@@ -857,12 +857,7 @@ export interface MotionProperties extends ClassHandle {
   SetAngularVelocity(angularVelocity: Vec3): void;
   SetLinearVelocityClamped(linearVelocity: Vec3): void;
   SetAngularVelocityClamped(angularVelocity: Vec3): void;
-  GetPointVelocityCOM(out: Vec3, pointRelativeToCOM: Vec3): Vec3;
-  LockTranslation(out: Vec3, v: Vec3): Vec3;
-  LockAngular(out: Vec3, v: Vec3): Vec3;
   SetInverseInertia(diagonal: Vec3, rotation: Quat): void;
-  MultiplyWorldSpaceInverseInertiaByVector(out: Vec3, rotation: Quat, v: Vec3): Vec3;
-  GetInverseInertiaForRotation(out: Mat44, rotation: Mat44): Mat44;
   GetMaxLinearVelocity(): number;
   GetMaxAngularVelocity(): number;
   GetLinearDamping(): number;
@@ -878,6 +873,11 @@ export interface MotionProperties extends ClassHandle {
   SetInverseMass(inverseMass: number): void;
   MoveKinematic(deltaPosition: Vec3, deltaRotation: Quat, deltaTime: number): void;
   ScaleToMass(mass: number): void;
+  GetInverseInertiaForRotation(out: Mat44, rotation: Mat44): Mat44;
+  MultiplyWorldSpaceInverseInertiaByVector(out: Vec3, rotation: Quat, v: Vec3): Vec3;
+  GetPointVelocityCOM(out: Vec3, pointRelativeToCOM: Vec3): Vec3;
+  LockTranslation(out: Vec3, v: Vec3): Vec3;
+  LockAngular(out: Vec3, v: Vec3): Vec3;
 }
 
 export interface SoftBodyMotionProperties extends MotionProperties {
@@ -1399,7 +1399,7 @@ export interface CollisionGroup extends ClassHandle {
 export interface MassProperties extends ClassHandle {
   mInertia: Mat44;
   mMass: number;
-  DecomposePrincipalMomentsOfInertiaInto(outRotation: number, outDiagonal: number): boolean;
+  DecomposePrincipalMomentsOfInertia(outRotation: Mat44, outDiagonal: Vec3): boolean;
   Translate(translation: Vec3): void;
   Scale(scale: Vec3): void;
   Rotate(rotation: Mat44): void;
@@ -1557,7 +1557,7 @@ export interface HingeConstraint extends TwoBodyConstraint {
   GetLocalSpaceNormalAxis1(out: Vec3): Vec3;
   GetLocalSpaceNormalAxis2(out: Vec3): Vec3;
   GetTotalLambdaPosition(out: Vec3): Vec3;
-  GetTotalLambdaRotation(out: Vec3): Vec3;
+  GetTotalLambdaRotation(out: Float2): Float2;
   SetTargetOrientationBS(orientation: Quat): void;
   GetCurrentAngle(): number;
   SetTargetAngularVelocity(velocity: number): void;
@@ -1612,7 +1612,7 @@ export interface SliderConstraint extends TwoBodyConstraint {
   SetMotorState(state: EMotorState): void;
   SetLimitsSpringSettings(settings: SpringSettings): void;
   HasLimits(): boolean;
-  GetTotalLambdaPosition(out: Vec3): Vec3;
+  GetTotalLambdaPosition(out: Float2): Float2;
   GetTotalLambdaRotation(out: Vec3): Vec3;
   GetCurrentPosition(): number;
   SetTargetVelocity(velocity: number): void;
@@ -1949,11 +1949,11 @@ export interface CharacterVirtualContact extends ClassHandle {
   GetBodyB(): number;
   GetCharacterIDB(): number;
   GetSubShapeIDB(): number;
-  GetUserData(): number;
   GetPosition(out: Vec3): Vec3;
   GetLinearVelocity(out: Vec3): Vec3;
   GetContactNormal(out: Vec3): Vec3;
   GetSurfaceNormal(out: Vec3): Vec3;
+  GetUserData(): bigint;
 }
 
 export interface ArrayCharacterVirtualContact extends ClassHandle {
@@ -2009,11 +2009,11 @@ export interface CharacterBase extends ClassHandle {
   IsSupported(): boolean;
   GetGroundBodyID(): number;
   GetGroundSubShapeID(): number;
-  GetGroundUserData(): number;
   GetUp(out: Vec3): Vec3;
   GetGroundPosition(out: Vec3): Vec3;
   GetGroundNormal(out: Vec3): Vec3;
   GetGroundVelocity(out: Vec3): Vec3;
+  GetGroundUserData(): bigint;
   SetUp(up: Vec3): void;
   IsSlopeTooSteep(normal: Vec3): boolean;
   GetCosMaxSlopeAngle(): number;
@@ -2038,8 +2038,6 @@ export interface CharacterVirtual extends CharacterBase {
   HasCollidedWithCharacter(character: CharacterVirtual | null): boolean;
   RefreshContacts(objectLayer: number, jolt: JoltInterface): void;
   GetInnerBodyID(): number;
-  GetUserData(): number;
-  SetUserData(userData: number): void;
   GetMaxNumHits(): number;
   SetMaxNumHits(maxHits: number): void;
   HasCollidedWithBody(bodyID: number): boolean;
@@ -2050,11 +2048,12 @@ export interface CharacterVirtual extends CharacterBase {
   GetWorldTransform(out: Mat44): Mat44;
   GetCenterOfMassTransform(out: Mat44): Mat44;
   GetShapeOffset(out: Vec3): Vec3;
+  GetUserData(): bigint;
+  SetUserData(userData: bigint): void;
   SetPosition(position: Vec3): void;
   SetLinearVelocity(velocity: Vec3): void;
   CanWalkStairs(linearVelocity: Vec3): boolean;
   SetShapeOffset(shapeOffset: Vec3): void;
-  CancelVelocityTowardsSteepSlopes(out: Vec3, desiredVelocity: Vec3): Vec3;
   StickToFloor(stepDown: Vec3, broadPhaseFilter: BroadPhaseLayerFilter, objectLayerFilter: ObjectLayerFilter, bodyFilter: BodyFilter, shapeFilter: ShapeFilter, jolt: JoltInterface): boolean;
   SetRotation(rotation: Quat): void;
   GetMass(): number;
@@ -2071,6 +2070,7 @@ export interface CharacterVirtual extends CharacterBase {
   SetShape(shape: Shape | null, maxPenetrationDepth: number, objectLayer: number, jolt: JoltInterface): boolean;
   GetHitReductionCosMaxAngle(): number;
   SetHitReductionCosMaxAngle(cosMaxAngle: number): void;
+  CancelVelocityTowardsSteepSlopes(out: Vec3, desiredVelocity: Vec3): Vec3;
   WalkStairs(deltaTime: number, stepUp: Vec3, stepForward: Vec3, stepForwardTest: Vec3, stepDownExtra: Vec3, broadPhaseFilter: BroadPhaseLayerFilter, objectLayerFilter: ObjectLayerFilter, bodyFilter: BodyFilter, shapeFilter: ShapeFilter, jolt: JoltInterface): boolean;
 }
 
@@ -2509,9 +2509,9 @@ export interface VehicleConstraint extends Constraint {
   GetLocalForward(out: Vec3): Vec3;
   GetLocalUp(out: Vec3): Vec3;
   GetWorldUp(out: Vec3): Vec3;
+  OverrideGravity(gravity: Vec3): void;
   GetWheelLocalTransform(out: Mat44, wheelIndex: number, wheelRight: Vec3, wheelUp: Vec3): Mat44;
   GetWheelWorldTransform(out: Mat44, wheelIndex: number, wheelRight: Vec3, wheelUp: Vec3): Mat44;
-  OverrideGravity(gravity: Vec3): void;
   SetMaxPitchRollAngle(maxPitchRollAngle: number): void;
   GetMaxPitchRollAngle(): number;
 }
@@ -3340,20 +3340,17 @@ export interface CharacterContactListenerCallbacks {
 
 export type Contact = {
   body1: number; body2: number; subShape1: number; subShape2: number;
-  normal: Vec3; penetration: number; isNew: boolean; pointCount: number;
+  normal: Vec3; penetration: number; pointCount: number;
 };
 export type ContactPoint = { on1: Vec3; on2: Vec3 };
 export type RemovedContact = { body1: number; subShape1: number; body2: number; subShape2: number };
-/** Buffered contact events — zero-allocation bulk reads (see ContactListenerBuffer). */
+/** Buffered contact events — zero-allocation bulk reads (see ContactListenerBuffer). Operated via the
+ * module-level contact-buffer functions on JoltFacade below (clearContactBuffer / updateContactBuffer /
+ * getContactBuffer*At / destroyContactBuffer), not instance methods. */
 export interface ContactBuffer {
-  readonly contactCount: number;
+  readonly addedCount: number;
+  readonly persistedCount: number;
   readonly removedCount: number;
-  clear(): void;    // before Step
-  refresh(): void;  // after Step
-  getContact(out: Contact, index: number): Contact;
-  getPoint(out: ContactPoint, contact: Contact, pointIndex: number): ContactPoint;
-  getRemoved(out: RemovedContact, index: number): RemovedContact;
-  destroy(): void;
 }
 export type ActiveBodyState = {
   id: number;
@@ -3368,6 +3365,13 @@ export interface ActiveBodyBufferHandle {
 }
 export interface JoltFacade {
   createContactBuffer(physicsSystem: PhysicsSystem): ContactBuffer;
+  clearContactBuffer(buffer: ContactBuffer): void;    // before Step
+  updateContactBuffer(buffer: ContactBuffer): void;   // after Step
+  getContactBufferAddedAt(buffer: ContactBuffer, out: Contact, index: number): Contact;
+  getContactBufferPersistedAt(buffer: ContactBuffer, out: Contact, index: number): Contact;
+  getContactBufferRemovedAt(buffer: ContactBuffer, out: RemovedContact, index: number): RemovedContact;
+  getContactBufferPointAt(buffer: ContactBuffer, out: ContactPoint, contact: Contact, pointIndex: number): ContactPoint;
+  destroyContactBuffer(buffer: ContactBuffer): void;
   createContact(): Contact;
   createContactPoint(): ContactPoint;
   createRemovedContact(): RemovedContact;

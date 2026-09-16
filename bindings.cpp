@@ -106,10 +106,35 @@ static inline void WriteAABox(const JPH::AABox& b, uintptr_t out) {
 #define MAT_ELEM(i) element(+[](const JPH::Mat44 &m) { return m(i % 4, i / 4); }, \
     +[](JPH::Mat44 &m, float v) { m(i % 4, i / 4) = v; })
 
+// Rebuild a math value from the loose scalars the facade unpacks JS-side (see the Pass* tags
+// in out_desc). Passing a Vec3/Quat/Mat44 as a value_array arg costs an embind toWireType
+// temp + destructor per call; crossing the same data as scalars costs nothing, so the
+// out_function lambdas take plain numbers and reconstruct the JPH value here.
+static inline JPH::Vec3 mkVec3(float x, float y, float z) { return JPH::Vec3(x, y, z); }
+static inline JPH::Quat mkQuat(float x, float y, float z, float w) { return JPH::Quat(x, y, z, w); }
+// RVec3 == Vec3 (float) in single precision, DVec3 (double) under JPH_DOUBLE_PRECISION. Take
+// Real so this compiles at either precision and the wasm crossing matches the build's Real width.
+static inline JPH::RVec3 mkRVec3(JPH::Real x, JPH::Real y, JPH::Real z) { return JPH::RVec3(x, y, z); }
+// Column-major, matching WriteMat4 / MAT_ELEM (element i = m(i%4, i/4)).
+static inline JPH::Mat44 mkMat44(float m0, float m1, float m2, float m3, float m4, float m5, float m6, float m7,
+    float m8, float m9, float m10, float m11, float m12, float m13, float m14, float m15) {
+    return JPH::Mat44(JPH::Vec4(m0, m1, m2, m3), JPH::Vec4(m4, m5, m6, m7),
+        JPH::Vec4(m8, m9, m10, m11), JPH::Vec4(m12, m13, m14, m15));
+}
+
 // Binding-site metadata consumed by postprocess-tsd.mjs. Filled during EMSCRIPTEN_BINDINGS via the
 // jolt_class_ DSL (.out_function / .constructor / .function) and serialized by the _*Meta() getters:
 // out-param value types, constructor param names + optional `val` types, and `val`-return types.
-struct OutEntry  { std::string cls, method; std::vector<int> sizes; std::vector<std::string> tsTypes; int trailing; };
+// `names` are the public param names (out slots then passes, in order); `sizes`/`outTs` the
+// float count + TS type of each out slot; `passKinds`/`passTs` the facade unpack kind and public
+// TS type of each forwarded input arg. Drives both the facade reader codegen and the .d.ts.
+struct OutEntry  { std::string cls, method; std::vector<std::string> names, nameTs; std::vector<int> sizes;
+    std::vector<std::string> outTs, passKinds, passTs; std::string retTs; };  // nameTs: optional per-param TS
+    // type from a `"Method(out, ray: RRayCast)"` annotation, positional against names; empty => use the
+    // descriptor's type. Needed where a Pass arg is a class handle, not the scalar its tag implies.
+    // retTs: for a value-returning
+    // out_function (lambda returns a value in ADDITION to writing out-params), the TS return type from a
+    // `"Method(...): T"` annotation. Empty => reader returns the out (single) or out-tuple (multi).
 struct CtorParam { std::string name, tsType; };   // tsType empty => embind infers the type
 struct CtorEntry { std::string cls; std::vector<CtorParam> params; };
 struct RetEntry  { std::string cls, method, tsType; };
@@ -159,8 +184,6 @@ struct AABoxTag { static constexpr const char* tsType = "AABox"; static constexp
 struct Mat44Tag { static constexpr const char* tsType = "Mat44"; static constexpr int size = 16; };
 
 template<typename Tag> struct out_t {};
-struct pass_t {};
-inline constexpr pass_t Pass{};   // a forwarded (non-out) input arg
 
 // out-param descriptors — bare value-type names
 inline constexpr out_t<Float2Tag> Float2 {};
@@ -170,32 +193,80 @@ inline constexpr out_t<Vec4Tag>  Vec4  {};
 inline constexpr out_t<AABoxTag> AABox {};
 inline constexpr out_t<Mat44Tag> Mat44 {};
 
+// ---- pass descriptors (forwarded input args) ----
+// jsKind tells the facade how to unpack the JS value into scalars, nScalars how many wasm args
+// that is, tsType the public .d.ts type. A composite pass (Vec3/Quat/Mat44/RVec3) crosses as
+// loose scalars — no embind value_array temp/destructor — and the lambda rebuilds it via mk*().
+// Scalar Pass is unchanged: one number straight through. RVec3 renders as Vec3 (== in single
+// precision, which is what the shipped .d.ts is generated from).
+struct ScalarPass { static constexpr const char* tsType = "number"; static constexpr const char* jsKind = "scalar"; static constexpr int nScalars = 1;  };
+struct Vec3Pass   { static constexpr const char* tsType = "Vec3";   static constexpr const char* jsKind = "vec3";   static constexpr int nScalars = 3;  };
+struct RVec3Pass  { static constexpr const char* tsType = "Vec3";   static constexpr const char* jsKind = "vec3";   static constexpr int nScalars = 3;  };
+struct QuatPass   { static constexpr const char* tsType = "Quat";   static constexpr const char* jsKind = "quat";   static constexpr int nScalars = 4;  };
+struct Mat44Pass  { static constexpr const char* tsType = "Mat44";  static constexpr const char* jsKind = "mat44";  static constexpr int nScalars = 16; };
+
+template<typename Tag> struct pass_t {};
+inline constexpr pass_t<ScalarPass> Pass{};        // a forwarded scalar (number) arg
+inline constexpr pass_t<Vec3Pass>   PassVec3{};
+inline constexpr pass_t<RVec3Pass>  PassRVec3{};
+inline constexpr pass_t<QuatPass>   PassQuat{};
+inline constexpr pass_t<Mat44Pass>  PassMat44{};
+
 // ---- function-pointer arity (works with +[] non-capturing lambdas) ----
 template<typename F> struct FnArity;
 template<typename R, typename... A>
 struct FnArity<R(*)(A...)> : std::integral_constant<int, (int)sizeof...(A)> {};
 
-// ---- descriptor pack: count outs/trailing, collect sizes and TS type names ----
-// Descriptor order: out_t<Tag>... then pass_t(Pass)..., one per JS-facing signature slot.
-template<typename... Ds> struct DescInfo {
-    static constexpr int nOuts = 0, trailing = 0, totalSize = 0;
-    static void sizes(std::vector<int>&) {}
-    static void tsTypes(std::vector<std::string>&) {}
-};
-template<typename Tag, typename... Rest> struct DescInfo<out_t<Tag>, Rest...> {
-    static constexpr int nOuts     = 1 + DescInfo<Rest...>::nOuts;
-    static constexpr int trailing  = DescInfo<Rest...>::trailing;
-    static constexpr int totalSize = Tag::size + DescInfo<Rest...>::totalSize;
-    static void sizes(std::vector<int>& v)           { v.push_back(Tag::size);    DescInfo<Rest...>::sizes(v); }
-    static void tsTypes(std::vector<std::string>& v)  { v.push_back(Tag::tsType); DescInfo<Rest...>::tsTypes(v); }
-};
-template<typename... Rest> struct DescInfo<pass_t, Rest...> {
-    static constexpr int nOuts     = DescInfo<Rest...>::nOuts;
-    static constexpr int trailing  = 1 + DescInfo<Rest...>::trailing;
-    static constexpr int totalSize = DescInfo<Rest...>::totalSize;
-    static void sizes(std::vector<int>& v)           { DescInfo<Rest...>::sizes(v); }
-    static void tsTypes(std::vector<std::string>& v)  { DescInfo<Rest...>::tsTypes(v); }
-};
+// ---- descriptor traits + collection (C++17 folds, no recursion) ----
+// Each descriptor contributes to two compile-time sums and one runtime list. An out_t<Tag> is one
+// out slot: 1 lambda param (the scratch ptr) and Tag::size floats. A pass_t<Tag> is one forwarded
+// input: Tag::nScalars lambda params (the unpacked scalars) and 0 out floats. Descriptor order
+// (out_t... then pass_t...) is preserved by the left-to-right comma fold in collectDesc.
+struct PassInfo { const char* tsType; const char* jsKind; int nScalars; };
+
+template<typename Tag> constexpr int descArity(out_t<Tag>)  { return 1; }
+template<typename Tag> constexpr int descArity(pass_t<Tag>) { return Tag::nScalars; }
+template<typename Tag> constexpr int descSize (out_t<Tag>)  { return Tag::size; }
+template<typename Tag> constexpr int descSize (pass_t<Tag>) { return 0; }
+
+// paramArity = lambda params after `self` (out ptrs + pass scalars); totalSize = out floats (<= scratch).
+template<typename... Ds> inline constexpr int paramArity_v = (0 + ... + descArity(Ds{}));
+template<typename... Ds> inline constexpr int totalSize_v  = (0 + ... + descSize(Ds{}));
+
+// Runtime metadata gathered from the descriptor pack: out-slot sizes/TS types, then per-pass info.
+struct DescMeta { std::vector<int> sizes; std::vector<std::string> outTs; std::vector<PassInfo> passes; };
+template<typename Tag> void appendDesc(DescMeta& m, out_t<Tag>)  { m.sizes.push_back(Tag::size); m.outTs.push_back(Tag::tsType); }
+template<typename Tag> void appendDesc(DescMeta& m, pass_t<Tag>) { m.passes.push_back({Tag::tsType, Tag::jsKind, Tag::nScalars}); }
+template<typename... Ds> DescMeta collectDesc() { DescMeta m; (appendDesc(m, Ds{}), ...); return m; }
+
+// ---- signature parsing ----
+// One parse of a DSL sig "Method(out, comTransform, scale): boolean" into its parts: method,
+// params (the public param names — out slots then passes, positional), paramTs (an optional
+// per-param TS type, same `name: Type` spelling the .constructor DSL uses; empty => take the
+// descriptor's type) and retTs (the optional return-type annotation, empty if none). A no-parens
+// sig ("Foo: number[]") yields method + retTs and empty params. The return colon is read only from
+// after ')', so per-param colons inside the parens stay unambiguous.
+struct SigInfo { std::string method; std::vector<std::string> params, paramTs; std::string retTs; };
+inline SigInfo parseSig(const char* sig) {
+    auto trim = [](std::string s) -> std::string {
+        size_t a = s.find_first_not_of(" \t");
+        return a == std::string::npos ? std::string() : s.substr(a, s.find_last_not_of(" \t") - a + 1);
+    };
+    SigInfo out;
+    const char* lp = strchr(sig, '(');
+    const char* rp = lp ? strrchr(lp, ')') : nullptr;
+    const char* methodEnd = lp ? lp : strchr(sig, ':');   // method ends at '(' or, if none, ':'
+    out.method = trim(methodEnd ? std::string(sig, methodEnd) : std::string(sig));
+    if (const char* colon = strchr(rp ? rp + 1 : sig, ':')) out.retTs = trim(colon + 1);
+    if (lp && rp) {
+        // Same splitter the .constructor DSL uses, so `name: Type` means the same thing in both.
+        for (auto& p : splitParams(std::string(lp + 1, rp).c_str())) {
+            out.params.push_back(std::move(p.name));
+            out.paramTs.push_back(std::move(p.tsType));
+        }
+    }
+    return out;
+}
 
 }  // namespace out_desc
 
@@ -244,20 +315,27 @@ struct jolt_class_ {
 
     template<typename Fn, typename... Descs>
     jolt_class_& out_fn_core_(const char* sig, Fn fn, Descs...) {
-        using DI = out_desc::DescInfo<Descs...>;
-        static_assert(out_desc::FnArity<Fn>::value == 1 + DI::nOuts + DI::trailing,
-            "out_function: lambda arity != 1 + outs + trailing — check descriptors");
-        static_assert(DI::totalSize <= 32,
+        // Lambda params after `self`: one ptr per out slot, then the unpacked scalars of every pass.
+        constexpr int arity = out_desc::paramArity_v<Descs...>;
+        static_assert(out_desc::FnArity<Fn>::value == 1 + arity,
+            "out_function: lambda arity != 1 + out slots + pass scalars — check descriptors vs lambda params");
+        static_assert(out_desc::totalSize_v<Descs...> <= 32,
             "out_function: combined out sizes exceed sOutScratch[32] — bump sOutScratch or split");
-        const char* paren = strchr(sig, '(');
-        // Strip trailing whitespace from the method name (guards against "Foo (out)" typos).
-        std::string method = paren ? std::string(sig, paren) : std::string(sig);
-        while (!method.empty() && method.back() == ' ') method.pop_back();
-        std::string intoSig = method + "Into" + (paren ? paren : "()");
-        c.function(intoSig.c_str(), fn);
-        std::vector<int> szVec; DI::sizes(szVec);
-        std::vector<std::string> tsVec; DI::tsTypes(tsVec);
-        sOutRegistry.push_back({name_, method, szVec, tsVec, DI::trailing});
+        out_desc::SigInfo si = out_desc::parseSig(sig);
+        // Register a raw `MethodInto` whose placeholder param count matches the lambda (out ptrs +
+        // pass scalars), so --emit-tsd renders a well-formed line that gen-bindings replaces with the
+        // public reader signature (rebuilt from the metadata below).
+        std::string intoParams;
+        for (int i = 0; i < arity; i++) { if (i) intoParams += ", "; intoParams += "a" + std::to_string(i); }
+        c.function((si.method + "Into(" + intoParams + ")").c_str(), fn);
+        // Binding-site metadata for the facade reader codegen + .d.ts (published by _outMeta).
+        out_desc::DescMeta meta = out_desc::collectDesc<Descs...>();
+        OutEntry e;
+        e.cls = name_; e.method = si.method; e.names = std::move(si.params);
+        e.nameTs = std::move(si.paramTs); e.retTs = std::move(si.retTs);
+        e.sizes = std::move(meta.sizes); e.outTs = std::move(meta.outTs);
+        for (const auto& p : meta.passes) { e.passKinds.push_back(p.jsKind); e.passTs.push_back(p.tsType); }
+        sOutRegistry.push_back(std::move(e));
         return *this;
     }
 
@@ -1309,11 +1387,13 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("MustBeStatic", &Shape::MustBeStatic)
         .out_function("GetLocalBounds(out)", out_desc::AABox,
             +[](const Shape &s, uintptr_t out) { WriteAABox(s.GetLocalBounds(), out); })
-        .out_function("GetWorldSpaceBounds(out, comTransform, scale)", out_desc::AABox, out_desc::Pass, out_desc::Pass,
-            +[](const Shape &s, uintptr_t out, Mat44 comTransform, Vec3 scale) {
+        .out_function("GetWorldSpaceBounds(out, comTransform, scale)", out_desc::AABox, out_desc::PassMat44, out_desc::PassVec3,
+            +[](const Shape &s, uintptr_t out, float m0, float m1, float m2, float m3, float m4, float m5, float m6, float m7,
+                float m8, float m9, float m10, float m11, float m12, float m13, float m14, float m15, float sx, float sy, float sz) {
+                Mat44 comTransform = mkMat44(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15); Vec3 scale = mkVec3(sx, sy, sz);
                 WriteAABox(s.GetWorldSpaceBounds(comTransform, scale), out); })
-        .function("GetUserData", +[](const Shape &s) { return (uint32)s.GetUserData(); })
-        .function("SetUserData(userData)", +[](Shape &s, uint32 userData) { s.SetUserData(userData); })
+        .function("GetUserData", +[](const Shape &s) { return (uint64)s.GetUserData(); })
+        .function("SetUserData(userData)", +[](Shape &s, uint64 userData) { s.SetUserData(userData); })
         .function("GetSubShapeIDBitsRecursive", &Shape::GetSubShapeIDBitsRecursive)
         .function("GetInnerRadius", &Shape::GetInnerRadius)
         .function("GetLeafShape(subShapeID)",
@@ -1323,11 +1403,12 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetMaterial(subShapeID)",
             +[](const Shape &s, uint32 subShapeID) {
                 return const_cast<PhysicsMaterial *>(s.GetMaterial(toSubShapeID(subShapeID))); }, allow_raw_pointers())
-        .out_function("GetSurfaceNormal(out, subShapeID, localSurfacePosition)", out_desc::Vec3, out_desc::Pass, out_desc::Pass,
-            +[](const Shape &s, uintptr_t out, uint32 subShapeID, Vec3 localSurfacePosition) {
+        .out_function("GetSurfaceNormal(out, subShapeID, localSurfacePosition)", out_desc::Vec3, out_desc::Pass, out_desc::PassVec3,
+            +[](const Shape &s, uintptr_t out, uint32 subShapeID, float px, float py, float pz) {
+                Vec3 localSurfacePosition = mkVec3(px, py, pz);
                 WriteVec3(s.GetSurfaceNormal(toSubShapeID(subShapeID), localSurfacePosition), out); })
         .function("GetSubShapeUserData(subShapeID)",
-            +[](const Shape &s, uint32 subShapeID) { return (uint32)s.GetSubShapeUserData(toSubShapeID(subShapeID)); })
+            +[](const Shape &s, uint32 subShapeID) { return (uint64)s.GetSubShapeUserData(toSubShapeID(subShapeID)); })
         .function("GetStats: { sizeBytes: number; numTriangles: number }", +[](const Shape &s) -> val {
                 Shape::Stats st = s.GetStats();
                 val o = val::object();
@@ -1599,8 +1680,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("SetNormal(normal)", +[](Plane &p, Vec3 n) { p.SetNormal(n); })
         .function("SetConstant(constant)", &Plane::SetConstant)
         .function("SignedDistance(point)", +[](const Plane &p, Vec3 pt) { return p.SignedDistance(pt); })
-        .out_function("ProjectPointOnPlane(out, point)", out_desc::Vec3, out_desc::Pass,
-            +[](const Plane &p, uintptr_t out, Vec3 pt) { WriteVec3(p.ProjectPointOnPlane(pt), out); })
+        .out_function("ProjectPointOnPlane(out, point)", out_desc::Vec3, out_desc::PassVec3,
+            +[](const Plane &p, uintptr_t out, float px, float py, float pz) { Vec3 pt = mkVec3(px, py, pz); WriteVec3(p.ProjectPointOnPlane(pt), out); })
         .function("Offset(distance)", +[](const Plane &p, float d) { return Plane(p.Offset(d)); })
         .function("Scaled(scale)", +[](const Plane &p, Vec3 s) { return Plane(p.Scaled(s)); })
         .function("GetTransformed(transform)", +[](const Plane &p, Mat44 m) { return Plane(p.GetTransformed(m)); })
@@ -1722,8 +1803,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
             +[](TransformedShape &ts, RMat44 t) { ts.SetWorldTransform(t); })
         .out_function("GetWorldSpaceBounds(out)", out_desc::AABox,
             +[](const TransformedShape &ts, uintptr_t out) { WriteAABox(ts.GetWorldSpaceBounds(), out); })
-        .out_function("GetWorldSpaceSurfaceNormal(out, subShapeID, position)", out_desc::Vec3, out_desc::Pass, out_desc::Pass,
-            +[](const TransformedShape &ts, uintptr_t out, uint32 subShapeID, RVec3 position) {
+        .out_function("GetWorldSpaceSurfaceNormal(out, subShapeID, position)", out_desc::Vec3, out_desc::Pass, out_desc::PassRVec3,
+            +[](const TransformedShape &ts, uintptr_t out, uint32 subShapeID, Real px, Real py, Real pz) {
+                RVec3 position = mkRVec3(px, py, pz);
                 WriteVec3(ts.GetWorldSpaceSurfaceNormal(toSubShapeID(subShapeID), position), out); })
         .function("GetSupportingFace(subShapeID, direction, baseOffset): Float32Array",
             +[](const TransformedShape &ts, uint32 subShapeID, Vec3 direction, RVec3 baseOffset) -> val {
@@ -1738,7 +1820,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
             +[](const TransformedShape &ts, uint32 subShapeID) {
                 return const_cast<PhysicsMaterial *>(ts.GetMaterial(toSubShapeID(subShapeID))); }, allow_raw_pointers())
         .function("GetSubShapeUserData(subShapeID)",
-            +[](const TransformedShape &ts, uint32 subShapeID) { return (uint32)ts.GetSubShapeUserData(toSubShapeID(subShapeID)); })
+            +[](const TransformedShape &ts, uint32 subShapeID) { return (uint64)ts.GetSubShapeUserData(toSubShapeID(subShapeID)); })
         .function("GetBodyID", +[](const TransformedShape &ts) { return fromBodyID(ts.mBodyID); })
         .function("GetShape", +[](const TransformedShape &ts) { return const_cast<Shape *>(ts.mShape.GetPtr()); }, allow_raw_pointers())
         .function("SetShape(shape)", +[](TransformedShape &ts, const Shape *s) { ts.mShape = s; }, allow_raw_pointers())
@@ -1886,9 +1968,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
     // Contact query interface passed into OnSoftBodyContactAdded (non-owning handle only).
     jolt_class_<SoftBodyManifold>("SoftBodyManifold")
         .function("HasContact(vertex)",           +[](const SoftBodyManifold &m, const SoftBodyVertex &v) { return m.HasContact(v); }, allow_raw_pointers())
-        .out_function("GetLocalContactPoint(out, vertex)", out_desc::Vec3, out_desc::Pass,
+        .out_function("GetLocalContactPoint(out, vertex: SoftBodyVertex)", out_desc::Vec3, out_desc::Pass,
             +[](const SoftBodyManifold &m, uintptr_t out, const SoftBodyVertex &v) { WriteVec3(m.GetLocalContactPoint(v), out); })
-        .out_function("GetContactNormal(out, vertex)", out_desc::Vec3, out_desc::Pass,
+        .out_function("GetContactNormal(out, vertex: SoftBodyVertex)", out_desc::Vec3, out_desc::Pass,
             +[](const SoftBodyManifold &m, uintptr_t out, const SoftBodyVertex &v) { WriteVec3(m.GetContactNormal(v), out); })
         .function("GetContactBodyID(vertex)",     +[](const SoftBodyManifold &m, const SoftBodyVertex &v) { return (uint32)m.GetContactBodyID(v).GetIndexAndSequenceNumber(); }, allow_raw_pointers())
         .function("GetNumSensorContacts",         +[](const SoftBodyManifold &m) { return (uint32)m.GetNumSensorContacts(); })
@@ -2139,7 +2221,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("MoveKinematic(bodyID, targetPosition, targetRotation, deltaTime)",
             +[](BodyInterface &bi, uint32 id, RVec3 p, Quat r, float dt) { bi.MoveKinematic(toBodyID(id), p, r, dt); })
         .out_function("GetPointVelocity(out, bodyID, point)",
-            out_desc::Vec3, out_desc::Pass, out_desc::Pass, +[](const BodyInterface &bi, uintptr_t out, uint32 id, RVec3 p) { WriteVec3(bi.GetPointVelocity(toBodyID(id), p), out); })
+            out_desc::Vec3, out_desc::Pass, out_desc::PassRVec3, +[](const BodyInterface &bi, uintptr_t out, uint32 id, Real px, Real py, Real pz) { RVec3 p = mkRVec3(px, py, pz); WriteVec3(bi.GetPointVelocity(toBodyID(id), p), out); })
         // scalars / enums
         .function("IsAdded(bodyID)", +[](const BodyInterface &bi, uint32 id) { return bi.IsAdded(toBodyID(id)); })
         .function("GetBodyType(bodyID)", +[](const BodyInterface &bi, uint32 id) { return bi.GetBodyType(toBodyID(id)); })
@@ -2258,7 +2340,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .out_function("GetLinearVelocity(out)", out_desc::Vec3, +[](const Body &s, uintptr_t out) { WriteVec3(s.GetLinearVelocity(), out); })
         .out_function("GetAngularVelocity(out)", out_desc::Vec3, +[](const Body &s, uintptr_t out) { WriteVec3(s.GetAngularVelocity(), out); })
         .out_function("GetPointVelocity(out, point)",
-            out_desc::Vec3, out_desc::Pass, +[](const Body &b, uintptr_t out, RVec3 p) { WriteVec3(b.GetPointVelocity(p), out); })
+            out_desc::Vec3, out_desc::PassRVec3, +[](const Body &b, uintptr_t out, Real px, Real py, Real pz) { RVec3 p = mkRVec3(px, py, pz); WriteVec3(b.GetPointVelocity(p), out); })
         .out_function("GetWorldSpaceBounds(out)",   // AABox -> [minX,minY,minZ,maxX,maxY,maxZ]
             out_desc::AABox, +[](const Body &b, uintptr_t out) { WriteAABox(b.GetWorldSpaceBounds(), out); })
         // rigid-body buoyancy: apply the impulse from a fluid whose surface is the plane
@@ -2343,8 +2425,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .out_function("GetInverseInertia(out)", out_desc::Mat44, +[](const Body &b, uintptr_t out) { Mat44 m = b.GetInverseInertia(); WriteMat4(m, out); })
         .out_function("GetInverseCenterOfMassTransform(out)", out_desc::Mat44, +[](const Body &b, uintptr_t out) { RMat44 m = b.GetInverseCenterOfMassTransform(); WriteMat4(m, out); })
         .out_function("GetWorldSpaceSurfaceNormal(out, subShapeID, position)",
-            out_desc::Vec3, out_desc::Pass, out_desc::Pass,
-            +[](const Body &b, uintptr_t out, uint32 subShapeID, RVec3 pos) {
+            out_desc::Vec3, out_desc::Pass, out_desc::PassRVec3,
+            +[](const Body &b, uintptr_t out, uint32 subShapeID, Real px, Real py, Real pz) {
+                RVec3 pos = mkRVec3(px, py, pz);
                 WriteVec3(b.GetWorldSpaceSurfaceNormal(toSubShapeID(subShapeID), pos), out); })
         .function("GetTransformedShape", +[](const Body &b) { return b.GetTransformedShape(); })
         .function("GetBodyCreationSettings", +[](const Body &b) { return b.GetBodyCreationSettings(); })
@@ -2389,20 +2472,24 @@ EMSCRIPTEN_BINDINGS(jolt) {
             +[](MotionProperties &mp, Vec3 d, Quat r) { mp.SetInverseInertia(d, r); })
         .out_function("GetLocalSpaceInverseInertia(out)", out_desc::Mat44, +[](const MotionProperties &mp, uintptr_t out) { Mat44 m = mp.GetLocalSpaceInverseInertia(); WriteMat4(m, out); })
         .out_function("GetInverseInertiaForRotation(out, rotation)",
-            out_desc::Mat44, out_desc::Pass,
-            +[](const MotionProperties &mp, uintptr_t out, Mat44 rot) { Mat44 m = mp.GetInverseInertiaForRotation(rot); WriteMat4(m, out); })
+            out_desc::Mat44, out_desc::PassMat44,
+            +[](const MotionProperties &mp, uintptr_t out, float m0, float m1, float m2, float m3, float m4, float m5, float m6, float m7,
+                float m8, float m9, float m10, float m11, float m12, float m13, float m14, float m15) {
+                Mat44 rot = mkMat44(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15);
+                Mat44 m = mp.GetInverseInertiaForRotation(rot); WriteMat4(m, out); })
         .out_function("MultiplyWorldSpaceInverseInertiaByVector(out, rotation, v)",
-            out_desc::Vec3, out_desc::Pass, out_desc::Pass,
-            +[](const MotionProperties &mp, uintptr_t out, Quat r, Vec3 v) { WriteVec3(mp.MultiplyWorldSpaceInverseInertiaByVector(r, v), out); })
+            out_desc::Vec3, out_desc::PassQuat, out_desc::PassVec3,
+            +[](const MotionProperties &mp, uintptr_t out, float rx, float ry, float rz, float rw, float vx, float vy, float vz) {
+                Quat r = mkQuat(rx, ry, rz, rw); Vec3 v = mkVec3(vx, vy, vz); WriteVec3(mp.MultiplyWorldSpaceInverseInertiaByVector(r, v), out); })
         .out_function("GetPointVelocityCOM(out, pointRelativeToCOM)",
-            out_desc::Vec3, out_desc::Pass, +[](const MotionProperties &mp, uintptr_t out, Vec3 p) { WriteVec3(mp.GetPointVelocityCOM(p), out); })
+            out_desc::Vec3, out_desc::PassVec3, +[](const MotionProperties &mp, uintptr_t out, float px, float py, float pz) { Vec3 p = mkVec3(px, py, pz); WriteVec3(mp.GetPointVelocityCOM(p), out); })
         .out_function("GetAccumulatedForce(out)", out_desc::Vec3, +[](const MotionProperties &mp, uintptr_t out) { WriteVec3(mp.GetAccumulatedForce(), out); })
         .out_function("GetAccumulatedTorque(out)", out_desc::Vec3, +[](const MotionProperties &mp, uintptr_t out) { WriteVec3(mp.GetAccumulatedTorque(), out); })
         .function("ResetForce", &MotionProperties::ResetForce)
         .function("ResetTorque", &MotionProperties::ResetTorque)
         .function("ResetMotion", &MotionProperties::ResetMotion)
-        .out_function("LockTranslation(out, v)", out_desc::Vec3, out_desc::Pass, +[](const MotionProperties &mp, uintptr_t out, Vec3 v) { WriteVec3(mp.LockTranslation(v), out); })
-        .out_function("LockAngular(out, v)", out_desc::Vec3, out_desc::Pass, +[](const MotionProperties &mp, uintptr_t out, Vec3 v) { WriteVec3(mp.LockAngular(v), out); })
+        .out_function("LockTranslation(out, v)", out_desc::Vec3, out_desc::PassVec3, +[](const MotionProperties &mp, uintptr_t out, float vx, float vy, float vz) { Vec3 v = mkVec3(vx, vy, vz); WriteVec3(mp.LockTranslation(v), out); })
+        .out_function("LockAngular(out, v)", out_desc::Vec3, out_desc::PassVec3, +[](const MotionProperties &mp, uintptr_t out, float vx, float vy, float vz) { Vec3 v = mkVec3(vx, vy, vz); WriteVec3(mp.LockAngular(v), out); })
         .function("SetNumVelocityStepsOverride(n)", &MotionProperties::SetNumVelocityStepsOverride)
         .function("GetNumVelocityStepsOverride", &MotionProperties::GetNumVelocityStepsOverride)
         .function("SetNumPositionStepsOverride(n)", &MotionProperties::SetNumPositionStepsOverride)
@@ -2500,7 +2587,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetBroadPhaseQuery",
             +[](PhysicsSystem &ps) { return const_cast<BroadPhaseQuery *>(&ps.GetBroadPhaseQuery()); }, allow_raw_pointers())
         // world-space surface normal at a raycast hit (locks the body internally).
-        .out_function("GetRayHitNormal(out, ray, hit)",
+        .out_function("GetRayHitNormal(out, ray: RRayCast, hit: RayCastResult)",
             out_desc::Vec3, out_desc::Pass, out_desc::Pass, +[](PhysicsSystem &ps, uintptr_t out, const RRayCast &ray, const RayCastResult &hit) {
                 Vec3 n = Vec3::sZero();
                 BodyLockRead lock(ps.GetBodyLockInterfaceNoLock(), hit.mBodyID);
@@ -2942,7 +3029,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("Rotate(rotation)", +[](MassProperties &m, Mat44 r) { m.Rotate(r); })
         .function("Translate(translation)", +[](MassProperties &m, Vec3 t) { m.Translate(t); })
         .function("Scale(scale)", +[](MassProperties &m, Vec3 s) { m.Scale(s); })
-        .out_function("DecomposePrincipalMomentsOfInertia(outRotation, outDiagonal)",
+        .out_function("DecomposePrincipalMomentsOfInertia(outRotation, outDiagonal): boolean",
             out_desc::Mat44, out_desc::Vec3,
             +[](const MassProperties &m, uintptr_t outRotation, uintptr_t outDiagonal) {
                 Mat44 rot; Vec3 diag; bool ok = m.DecomposePrincipalMomentsOfInertia(rot, diag);
@@ -3495,7 +3582,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mIsSensorB",   &CharacterVirtual::Contact::mIsSensorB)
         // mCharacterB may dangle when read via GetActiveContacts() — prefer GetCharacterIDB.
         .function("GetCharacterB", +[](const CharacterVirtual::Contact &c) { return const_cast<CharacterVirtual *>(c.mCharacterB); }, allow_raw_pointers())
-        .function("GetUserData", +[](const CharacterVirtual::Contact &c) { return (uint32)c.mUserData; })
+        .function("GetUserData", +[](const CharacterVirtual::Contact &c) { return (uint64)c.mUserData; })
         .function("GetMaterial", +[](const CharacterVirtual::Contact &c) { return const_cast<PhysicsMaterial *>(c.mMaterial); }, allow_raw_pointers())
         .property("mHadCollision",     &CharacterVirtual::Contact::mHadCollision)
         .property("mWasDiscarded",     &CharacterVirtual::Contact::mWasDiscarded)
@@ -3561,7 +3648,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetGroundBodyID", +[](const CharacterBase &c) { return (uint32)c.GetGroundBodyID().GetIndexAndSequenceNumber(); })
         .function("GetGroundMaterial", +[](const CharacterBase &c) { return const_cast<PhysicsMaterial *>(c.GetGroundMaterial()); }, allow_raw_pointers())
         .function("GetGroundSubShapeID", +[](const CharacterBase &c) { return (uint32)c.GetGroundSubShapeID().GetValue(); })
-        .function("GetGroundUserData", +[](const CharacterBase &c) { return (uint32)c.GetGroundUserData(); })
+        .function("GetGroundUserData", +[](const CharacterBase &c) { return (uint64)c.GetGroundUserData(); })
         .function("SaveState(stream)", +[](const CharacterBase &c, StateRecorder &s) { c.SaveState(s); }, allow_raw_pointers())
         .function("RestoreState(stream)", +[](CharacterBase &c, StateRecorder &s) { c.RestoreState(s); }, allow_raw_pointers());
 
@@ -3624,8 +3711,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetListener", &CharacterVirtual::GetListener, allow_raw_pointers())
         .function("SetCharacterVsCharacterCollision(collision)", &CharacterVirtual::SetCharacterVsCharacterCollision, allow_raw_pointers())
         // user data
-        .function("GetUserData", +[](const CharacterVirtual &c) { return (uint32)c.GetUserData(); })
-        .function("SetUserData(userData)", +[](CharacterVirtual &c, uint32 v) { c.SetUserData(v); })
+        .function("GetUserData", +[](const CharacterVirtual &c) { return (uint64)c.GetUserData(); })
+        .function("SetUserData(userData)", +[](CharacterVirtual &c, uint64 v) { c.SetUserData(v); })
         // shape offset / hit tuning
         .out_function("GetShapeOffset(out)", out_desc::Vec3, +[](const CharacterVirtual &c, uintptr_t out) { WriteVec3(c.GetShapeOffset(), out); })
         .function("SetShapeOffset(shapeOffset)", &CharacterVirtual::SetShapeOffset)
@@ -3641,7 +3728,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetTransformedShape", +[](const CharacterVirtual &c) { return c.GetTransformedShape(); })
         // velocity helper
         .out_function("CancelVelocityTowardsSteepSlopes(out, desiredVelocity)",
-            out_desc::Vec3, out_desc::Pass, +[](const CharacterVirtual &c, uintptr_t out, Vec3 v) { WriteVec3(c.CancelVelocityTowardsSteepSlopes(v), out); })
+            out_desc::Vec3, out_desc::PassVec3, +[](const CharacterVirtual &c, uintptr_t out, float vx, float vy, float vz) { Vec3 v = mkVec3(vx, vy, vz); WriteVec3(c.CancelVelocityTowardsSteepSlopes(v), out); })
         // contact-change tracking
         .function("StartTrackingContactChanges", &CharacterVirtual::StartTrackingContactChanges)
         .function("FinishTrackingContactChanges", &CharacterVirtual::FinishTrackingContactChanges)
@@ -4082,9 +4169,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetTrackedController", +[](VehicleConstraint &c) { return static_cast<TrackedVehicleController *>(c.GetController()); }, allow_raw_pointers())
         .function("GetMotorcycleController", +[](VehicleConstraint &c) { return static_cast<MotorcycleController *>(c.GetController()); }, allow_raw_pointers())
         .out_function("GetWheelLocalTransform(out, wheelIndex, wheelRight, wheelUp)",
-            out_desc::Mat44, out_desc::Pass, out_desc::Pass, out_desc::Pass, +[](VehicleConstraint &c, uintptr_t out, uint i, Vec3 right, Vec3 up) { WriteMat4(c.GetWheelLocalTransform(i, right, up), out); })
+            out_desc::Mat44, out_desc::Pass, out_desc::PassVec3, out_desc::PassVec3, +[](VehicleConstraint &c, uintptr_t out, uint i, float rx, float ry, float rz, float ux, float uy, float uz) { Vec3 right = mkVec3(rx, ry, rz); Vec3 up = mkVec3(ux, uy, uz); WriteMat4(c.GetWheelLocalTransform(i, right, up), out); })
         .out_function("GetWheelWorldTransform(out, wheelIndex, wheelRight, wheelUp)",
-            out_desc::Mat44, out_desc::Pass, out_desc::Pass, out_desc::Pass, +[](VehicleConstraint &c, uintptr_t out, uint i, Vec3 right, Vec3 up) { WriteMat4(c.GetWheelWorldTransform(i, right, up), out); })
+            out_desc::Mat44, out_desc::Pass, out_desc::PassVec3, out_desc::PassVec3, +[](VehicleConstraint &c, uintptr_t out, uint i, float rx, float ry, float rz, float ux, float uy, float uz) { Vec3 right = mkVec3(rx, ry, rz); Vec3 up = mkVec3(ux, uy, uz); WriteMat4(c.GetWheelWorldTransform(i, right, up), out); })
         .function("SetMaxPitchRollAngle(maxPitchRollAngle)", &VehicleConstraint::SetMaxPitchRollAngle)
         .function("GetMaxPitchRollAngle", &VehicleConstraint::GetMaxPitchRollAngle)
         .function("GetVehicleCollisionTester", +[](VehicleConstraint &c) { return const_cast<VehicleCollisionTester *>(c.GetVehicleCollisionTester()); }, allow_raw_pointers())
@@ -4113,19 +4200,28 @@ EMSCRIPTEN_BINDINGS(jolt) {
     // reads them straight off a probe module in-process, and the shipped runtime never decodes a
     // string over growable wasm memory (which TextDecoder rejects in the browser).
     //
-    // _outMeta: array of {cls, method, sizes:[N], trailing, tsTypes:["T",...]}
+    // _outMeta: array of {cls, method, names:[...], nameTs:[...], sizes:[N], outTs:[...], passKinds:[...],
+    // passTs:[...]} where names is the public param list (out slots then passes, in order) and nameTs
+    // the positional per-param TS overrides ("" => use the descriptor's type).
     emscripten::function("_outMeta", +[]() -> val {
+        auto toStrArray = [](const std::vector<std::string>& v) {
+            val a = val::array();
+            for (const auto& s : v) a.call<void>("push", s);
+            return a;
+        };
         val arr = val::array();
         for (const auto& e : sOutRegistry) {
             val o = val::object();
             o.set("cls", e.cls); o.set("method", e.method);
+            o.set("names", toStrArray(e.names));
+            o.set("nameTs", toStrArray(e.nameTs));
             val sizes = val::array();
             for (int s : e.sizes) sizes.call<void>("push", s);
             o.set("sizes", sizes);
-            o.set("trailing", e.trailing);
-            val tsTypes = val::array();
-            for (const auto& t : e.tsTypes) tsTypes.call<void>("push", t);
-            o.set("tsTypes", tsTypes);
+            o.set("outTs", toStrArray(e.outTs));
+            o.set("passKinds", toStrArray(e.passKinds));
+            o.set("passTs", toStrArray(e.passTs));
+            if (!e.retTs.empty()) o.set("retTs", e.retTs);
             arr.call<void>("push", o);
         }
         return arr;
