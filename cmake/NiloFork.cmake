@@ -23,25 +23,46 @@ set(JOLT_BUILD_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/build-tools/jolt_codegen_helpe
 # works, but make execs directly and dies with "Permission denied" / exit 127 -- invisible locally,
 # fails only in CI.
 #
-# Both come from emsdk: emsdk_manifest.json declares them as the node/python tools' activated_env
-# (with %.exe% on Windows), so any environment that can run emcc has them. This project already
-# hard-requires $ENV{EMSDK} for the toolchain file above, and all build entry points source
-# emsdk_env, so there is nothing to fall back TO -- a system interpreter would be a different
-# version than the toolchain's. Fail loudly instead.
-function(_nilo_require_interpreter out_var env_name)
+# Validate rather than trust the env: EXISTS alone is true for directories, and a relative value
+# resolves against the build rule's working directory -- both are the failure this prevents.
+function(_nilo_env_interpreter out_var env_name)
+    set(${out_var} "" PARENT_SCOPE)
     set(_path "$ENV{${env_name}}")
-    # EXISTS alone is not enough: it is true for directories, and a relative value resolves against
-    # the build rule's working directory -- both are the failure this indirection exists to prevent.
-    if (NOT _path OR NOT IS_ABSOLUTE "${_path}" OR NOT EXISTS "${_path}" OR IS_DIRECTORY "${_path}")
-        message(FATAL_ERROR
-            "Nilo: ${env_name} must be an absolute path to an interpreter, got '${_path}'. "
-            "Source emsdk_env (emsdk_env.sh / emsdk_env.ps1) before configuring.")
+    if (NOT _path)
+        return()
     endif()
-    set(${out_var} "${_path}" PARENT_SCOPE)
+    if (IS_ABSOLUTE "${_path}" AND EXISTS "${_path}" AND NOT IS_DIRECTORY "${_path}")
+        set(${out_var} "${_path}" PARENT_SCOPE)
+    else()
+        message(WARNING "Nilo: ignoring ${env_name}='${_path}' (not an absolute path to a file)")
+    endif()
 endfunction()
 
-_nilo_require_interpreter(NILO_PYTHON EMSDK_PYTHON)
-_nilo_require_interpreter(NILO_NODE   EMSDK_NODE)
+# node: emsdk installs node on every platform and exports EMSDK_NODE (emsdk_manifest.json declares
+# it as the node tool's activated_env, with %.exe% on Windows). Require it -- falling back to a
+# system node would silently use a different version than the toolchain's.
+_nilo_env_interpreter(NILO_NODE EMSDK_NODE)
+if (NOT NILO_NODE)
+    message(FATAL_ERROR
+        "Nilo: EMSDK_NODE is not set to an absolute interpreter path. "
+        "Source emsdk_env (emsdk_env.sh / emsdk_env.ps1) before configuring.")
+endif()
+
+# python: deliberately NOT symmetrical with node. emsdk bundles python only on Windows/macOS; on
+# Linux it uses the system interpreter and never sets EMSDK_PYTHON -- verified on ubuntu CI, where
+# `emsdk install 6.0.9` pulls only the node + wasm-binaries tools. Requiring it there broke the
+# release build at configure time. Prefer emsdk's when present, else find a host one; the helper it
+# runs is a trivial text substitution, so any python3 will do.
+_nilo_env_interpreter(NILO_PYTHON EMSDK_PYTHON)
+if (NOT NILO_PYTHON)
+    # A HOST build tool, but the Emscripten toolchain re-roots program lookup at the sysroot --
+    # force host search for this find_package, then restore.
+    set(_nilo_saved_root_mode "${CMAKE_FIND_ROOT_PATH_MODE_PROGRAM}")
+    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM "${_nilo_saved_root_mode}")
+    set(NILO_PYTHON "${Python3_EXECUTABLE}")
+endif()
 message(STATUS "Nilo: interpreters: node=${NILO_NODE} python=${NILO_PYTHON}")
 
 set(JOLT_REPLACE_IMPORT
