@@ -17,25 +17,33 @@ cmake_minimum_required(VERSION 3.13)
 # went away with the embind rewrite — glue.cpp and the .idl no longer exist.
 set(JOLT_BUILD_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/build-tools/jolt_codegen_helpers.py"
     CACHE INTERNAL "Nilo: path to Python codegen helpers")
-# Python3_EXECUTABLE is only defined once find_package has run, and this file is included before
-# anything else would trigger it — without this, JOLT_REPLACE_IMPORT expanded to an EMPTY program
-# name and the helper was unusable (which is why CMakeLists.txt called `perl` directly instead).
-# Prefer the interpreter emsdk ships and exports from emsdk_env.{sh,ps1}. Anywhere emcc can run,
-# that python exists by construction — so this avoids making CMake's Python discovery a new hard
-# build dependency (a REQUIRED find_package that misses would fail the release build outright).
-# Fall back to a host lookup for anyone driving cmake without having sourced emsdk_env.
-if (DEFINED ENV{EMSDK_PYTHON} AND EXISTS "$ENV{EMSDK_PYTHON}")
-    set(NILO_PYTHON "$ENV{EMSDK_PYTHON}")
-else()
-    # The interpreter is a HOST build tool, but the Emscripten toolchain re-roots program lookup at
-    # the sysroot — force host search for the duration of this find_package, then restore.
-    set(_nilo_saved_find_root_program "${CMAKE_FIND_ROOT_PATH_MODE_PROGRAM}")
-    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM "${_nilo_saved_find_root_program}")
-    set(NILO_PYTHON "${Python3_EXECUTABLE}")
-endif()
-message(STATUS "Nilo: codegen helper interpreter: ${NILO_PYTHON}")
+# Absolute paths to the two interpreters the build shells out to. NEVER a bare `node`/`python`:
+# emsdk_env puts $EMSDK first on PATH and $EMSDK/node is a DIRECTORY, so a bare name in a build rule
+# can resolve to that directory. Bash's PATH search skips non-regular files so interactive use
+# works, but make execs directly and dies with "Permission denied" / exit 127 -- invisible locally,
+# fails only in CI.
+#
+# Both come from emsdk: emsdk_manifest.json declares them as the node/python tools' activated_env
+# (with %.exe% on Windows), so any environment that can run emcc has them. This project already
+# hard-requires $ENV{EMSDK} for the toolchain file above, and all build entry points source
+# emsdk_env, so there is nothing to fall back TO -- a system interpreter would be a different
+# version than the toolchain's. Fail loudly instead.
+function(_nilo_require_interpreter out_var env_name)
+    set(_path "$ENV{${env_name}}")
+    # EXISTS alone is not enough: it is true for directories, and a relative value resolves against
+    # the build rule's working directory -- both are the failure this indirection exists to prevent.
+    if (NOT _path OR NOT IS_ABSOLUTE "${_path}" OR NOT EXISTS "${_path}" OR IS_DIRECTORY "${_path}")
+        message(FATAL_ERROR
+            "Nilo: ${env_name} must be an absolute path to an interpreter, got '${_path}'. "
+            "Source emsdk_env (emsdk_env.sh / emsdk_env.ps1) before configuring.")
+    endif()
+    set(${out_var} "${_path}" PARENT_SCOPE)
+endfunction()
+
+_nilo_require_interpreter(NILO_PYTHON EMSDK_PYTHON)
+_nilo_require_interpreter(NILO_NODE   EMSDK_NODE)
+message(STATUS "Nilo: interpreters: node=${NILO_NODE} python=${NILO_PYTHON}")
+
 set(JOLT_REPLACE_IMPORT
     "${NILO_PYTHON}" "${JOLT_BUILD_TOOLS}" replace-import-token
     CACHE INTERNAL "Nilo: post-emcc replace_by_import workaround command")
