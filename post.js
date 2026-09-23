@@ -16,9 +16,23 @@
   if (!outScratch) { console.error('JoltPhysics.js: _getOutScratch() returned null — out-param readers not installed'); return; }
   const outScratchF32 = outScratch >>> 2;
 
-  function makeOutParamReader(rawIntoMethod, slotSizes, trailingArgCount) {
+  // Expand one forwarded (pass) arg `arg${i}` into the loose scalars its `*Into` writer expects,
+  // keyed by the pass kind from _outMeta. Unpacking the vec/quat/mat object here — rather than
+  // letting embind marshal it as a value_array — is what makes the crossing zero-alloc: only
+  // numbers cross, so there's no per-call wasm temp + destructor. Mirrors the mk*() rebuild in
+  // bindings.cpp. A 'scalar' pass is already a number and crosses unchanged.
+  function unpackPass(kind, a) {
+    switch (kind) {
+      case 'vec3':  return `${a}[0],${a}[1],${a}[2]`;
+      case 'quat':  return `${a}[0],${a}[1],${a}[2],${a}[3]`;
+      case 'mat44': return Array.from({length: 16}, (_, i) => `${a}[${i}]`).join(',');
+      default:      return a; // scalar — already a number
+    }
+  }
+
+  function makeOutParamReader(rawIntoMethod, slotSizes, passKinds, retTs) {
     const outParams   = slotSizes.map((_, i) => `out${i}`);
-    const trailParams = Array.from({length: trailingArgCount}, (_, i) => `arg${i}`);
+    const trailParams = passKinds.map((_, i) => `arg${i}`);
     const paramList   = [...outParams, ...trailParams].join(', ');
 
     let byteOffset = 0;
@@ -28,17 +42,38 @@
       return ptr;
     });
 
-    const intoArgList = [...scratchSlotPtrs, ...trailParams].join(', ');
+    // Each pass keeps one JS param (`arg${i}`, API-compatible) but expands into scalars here.
+    const passArgs = passKinds.map((kind, i) => unpackPass(kind, `arg${i}`));
+    const intoArgList = [...scratchSlotPtrs, ...passArgs].join(', ');
 
     const copyLoops = slotSizes.map((size, slotIndex) => {
       const f32Base = outScratchF32 + slotSizes.slice(0, slotIndex).reduce((a, x) => a + x, 0);
       return `for(let i=0;i<${size};i++) out${slotIndex}[i]=h[${f32Base}+i];`;
     }).join('');
 
-    const returnExpr = outParams.length === 1 ? outParams[0] : `[${outParams.join(',')}]`;
-
+    // Value-returning out_function: the outs are written into the caller's arrays; return the raw
+    // call's result (e.g. a success boolean) instead of an out. Zero-alloc for scalar returns.
+    if (retTs) {
+      return new Function('rawIntoMethod', 'Module',
+        `return function(${paramList}){const h=Module.HEAPF32;const _r=rawIntoMethod.call(this,${intoArgList});${copyLoops}return _r;}`
+      )(rawIntoMethod, Module);
+    }
+    // One out: return it directly (zero-alloc). Multiple: return a FRESH tuple each call.
+    //
+    // This deliberately allocates. A hoisted, reused tuple would be zero-alloc, but every call
+    // would hand back the same array object, so holding a result across a second call would
+    // silently see the second call's values. Only 2 readers take this path
+    // (BodyInterface.GetPositionAndRotation / GetLinearAndAngularVelocity) and the tuple is pure
+    // convenience — the caller's own out arrays are the real results and are unaffected either
+    // way — so correctness wins over saving one small array per call. It's a PACKED array literal
+    // (not new Array(N), which is HOLEY and never transitions back to the fast path).
+    if (outParams.length === 1) {
+      return new Function('rawIntoMethod', 'Module',
+        `return function(${paramList}){const h=Module.HEAPF32;rawIntoMethod.call(this,${intoArgList});${copyLoops}return ${outParams[0]};}`
+      )(rawIntoMethod, Module);
+    }
     return new Function('rawIntoMethod', 'Module',
-      `return function(${paramList}){const h=Module.HEAPF32;rawIntoMethod.call(this,${intoArgList});${copyLoops}return ${returnExpr};}`
+      `return function(${paramList}){const h=Module.HEAPF32;rawIntoMethod.call(this,${intoArgList});${copyLoops}return [${outParams.join(',')}];}`
     )(rawIntoMethod, Module);
   }
 
@@ -47,13 +82,14 @@
     // Bracket notation for field access — the baked literal has quoted keys (JSON.stringify), which
     // closure won't rename, so bracket access stays consistent.
     for (const entry of __JOLT_OUT_META__) {
-      const cls      = entry['cls'];
-      const method   = entry['method'];
-      const sizes    = entry['sizes'];
-      const trailing = entry['trailing'];
+      const cls       = entry['cls'];
+      const method    = entry['method'];
+      const sizes     = entry['sizes'];
+      const passKinds = entry['passKinds'];
+      const retTs     = entry['retTs'];
       const proto = Module[cls] && Module[cls].prototype;
       if (!proto) { console.warn(`JoltPhysics.js: _outMeta: unknown class "${cls}" — skipping ${method}`); continue; }
-      proto[method] = makeOutParamReader(proto[method + 'Into'], sizes, trailing);
+      proto[method] = makeOutParamReader(proto[method + 'Into'], sizes, passKinds, retTs);
     }
   } catch (e) {
     console.error('JoltPhysics.js: failed to install out-param readers — all GetX(out) calls will malfunction:', e);
@@ -80,6 +116,7 @@
     physicsSystem['SetContactListener'](impl);
     return {
       '_impl': impl,
+      '_sys': physicsSystem,   // kept so destroy can unregister the listener before freeing impl
       'addedCount': 0, 'persistedCount': 0, 'removedCount': 0,
       _addedI32: null, _addedI32Base: 0,
       _addedF32: null, _addedF32Base: 0,
@@ -102,15 +139,16 @@
     buf['addedCount']     = impl['GetAddedCount']();
     buf['persistedCount'] = impl['GetPersistedCount']();
     buf['removedCount']   = impl['GetRemovedCount']();
-    buf._addedI32     = Module['HEAP32'];  buf._addedI32Base     = impl['AddedI32Ptr']()     >>> 2;
-    buf._addedF32     = Module['HEAPF32']; buf._addedF32Base     = impl['AddedF32Ptr']()     >>> 2;
-    buf._persistedI32 = Module['HEAP32'];  buf._persistedI32Base = impl['PersistedI32Ptr']() >>> 2;
-    buf._persistedF32 = Module['HEAPF32']; buf._persistedF32Base = impl['PersistedF32Ptr']() >>> 2;
-    buf._pointsF32    = Module['HEAPF32']; buf._pointsF32Base    = impl['PointsF32Ptr']()    >>> 2;
-    buf._removedI32   = Module['HEAP32'];  buf._removedI32Base   = impl['RemovedI32Ptr']()   >>> 2;
+    buf._addedI32Base     = impl['AddedI32Ptr']()     >>> 2;
+    buf._addedF32Base     = impl['AddedF32Ptr']()     >>> 2;
+    buf._persistedI32Base = impl['PersistedI32Ptr']() >>> 2;
+    buf._persistedF32Base = impl['PersistedF32Ptr']() >>> 2;
+    buf._pointsF32Base    = impl['PointsF32Ptr']()    >>> 2;
+    buf._removedI32Base   = impl['RemovedI32Ptr']()   >>> 2;
   }
 
-  function _readContact(i32, i32Base, f32, f32Base, buf, out, i) {
+  function _readContact(i32Base, f32Base, buf, out, i) {
+    const i32 = Module['HEAP32'], f32 = Module['HEAPF32'];
     const iBase = i32Base + i * CONTACT_I32_STRIDE;
     const fBase = f32Base + i * CONTACT_F32_STRIDE;
     out['body1']       = i32[iBase]     >>> 0;
@@ -128,16 +166,16 @@
   }
 
   function getContactBufferAddedAt(buf, out, i) {
-    return _readContact(buf._addedI32, buf._addedI32Base, buf._addedF32, buf._addedF32Base, buf, out, i);
+    return _readContact(buf._addedI32Base, buf._addedF32Base, buf, out, i);
   }
 
   function getContactBufferPersistedAt(buf, out, i) {
-    return _readContact(buf._persistedI32, buf._persistedI32Base, buf._persistedF32, buf._persistedF32Base, buf, out, i);
+    return _readContact(buf._persistedI32Base, buf._persistedF32Base, buf, out, i);
   }
 
   function getContactBufferRemovedAt(buf, out, i) {
     const iBase = buf._removedI32Base + i * REMOVED_I32_STRIDE;
-    const ri = buf._removedI32;
+    const ri = Module['HEAP32'];
     out['body1']    = ri[iBase]     >>> 0;
     out['subShape1']= ri[iBase + 1] >>> 0;
     out['body2']    = ri[iBase + 2] >>> 0;
@@ -147,13 +185,30 @@
 
   function getContactBufferPointAt(buf, out, contact, i) {
     const fBase = buf._pointsF32Base + (contact._ptStart + i) * POINT_F32_STRIDE;
-    const pf = buf._pointsF32;
+    const pf = Module['HEAPF32'];
     out['on1'][0] = pf[fBase];     out['on1'][1] = pf[fBase + 1]; out['on1'][2] = pf[fBase + 2];
     out['on2'][0] = pf[fBase + 3]; out['on2'][1] = pf[fBase + 4]; out['on2'][2] = pf[fBase + 5];
     return out;
   }
 
-  function destroyContactBuffer(buf) { buf['_impl']['delete'](); }
+  function destroyContactBuffer(buf) {
+    // Unregister before freeing — otherwise PhysicsSystem keeps a pointer to the deleted listener
+    // and the next Step() dereferences freed memory (use-after-free). SetContactListener is bound
+    // allow_raw_pointers(); null marshals to nullptr, which Jolt accepts to clear the listener.
+    //
+    // Only clear it if the system still points at OUR listener: a caller may have installed their
+    // own listener after creating this buffer, and blindly nulling would silently uninstall theirs.
+    // GetContactListener is allow_raw_pointers(), so embind returns a FRESH wrapper each call --
+    // `===` would never match. isAliasOf() is embind's public "same underlying C++ object" test.
+    const sys = buf['_sys'], impl = buf['_impl'];
+    const current = sys['GetContactListener']();
+    if (current && impl['isAliasOf'](current)) sys['SetContactListener'](null);
+    // NOTE: `current` is deliberately NOT deleted. embind's raw-pointer return still registers a
+    // destructor, so current.delete() destroys the C++ listener itself -- the following
+    // impl.delete() then double-frees and traps with "table index is out of bounds". Leaking one
+    // small JS handle per destroy (called once per buffer lifetime) is the cheaper mistake.
+    impl['delete']();
+  }
 
   // ---- active body buffer ----
 
@@ -171,15 +226,15 @@
     // them via bracket notation (dot-access would be renamed and mismatch).
     buf['_impl']['Refresh'](buf['_sys']);
     buf['bodyCount'] = buf['_impl']['GetBodyCount']();
-    const base   = buf['_impl']['BodiesF32Ptr']();
-    buf._f32Base = base >>> 2;
-    buf._f32     = Module['HEAPF32'];
-    buf._u32     = Module['HEAPU32'];
+    // Cache only the base offset (stable across heap growth — linear memory never
+    // moves existing data). The HEAP* views are re-grabbed per read below, since
+    // ALLOW_MEMORY_GROWTH detaches a cached view the moment the heap grows.
+    buf._f32Base = buf['_impl']['BodiesF32Ptr']() >>> 2;
   }
 
   function getActiveBodyBufferStateAt(buf, out, i) {
     const base = buf._f32Base + i * ACTIVE_BODY_STRIDE;
-    const f32 = buf._f32, u32 = buf._u32;
+    const f32 = Module['HEAPF32'], u32 = Module['HEAPU32'];
     out['id']          = u32[base];
     out['position'][0] = f32[base + 1];  out['position'][1] = f32[base + 2];  out['position'][2] = f32[base + 3];
     out['rotation'][0] = f32[base + 4];  out['rotation'][1] = f32[base + 5];
