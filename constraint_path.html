@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js path constraint demo<br/>
+		Boxes driven around a JS-defined circular path with different rotation constraints</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, setOnUpdate, createFloor, createBox, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+
+			class Line3DMesh {
+				constructor(points, color) {
+					this._points = points;
+					this._geometry = new THREE.BufferGeometry().setFromPoints(points);
+					this._line = new THREE.Line(this._geometry, new THREE.LineBasicMaterial({ color }));
+				}
+				update() { this._geometry.setFromPoints(this._points); }
+				getMesh() { return this._line; }
+			}
+
+			const updates = [];
+			initExample(Jolt, () => updates.forEach((f) => f()));
+			const { physicsSystem, scene, dynamicObjects } = Example;
+
+			createFloor();
+
+			// A JS-defined path: a circle of `pointResolution` samples in the XZ plane.
+			const pointResolution = 100;
+			const pathPoints = [];
+			for (let i = 0; i < pointResolution; i++)
+				pathPoints.push(new THREE.Vector3(Math.cos(i * 2 * Math.PI / pointResolution) * 2, 0, Math.sin(i * 2 * Math.PI / pointResolution) * 2));
+			const pathGeo = new Line3DMesh(pathPoints, '#0000FF');
+			const pathMesh = pathGeo.getMesh();
+
+			const normalVec = new THREE.Vector3(0, 1, 0);
+			const _t = new THREE.Vector3();
+			// PathConstraintPathJS: return the closest fraction / the frame at a fraction.
+			const pathImpl = {
+				GetPathMaxFraction: () => pointResolution,
+				GetClosestPoint: (position, fractionHint) => {
+					const p = _t.set(position[0], position[1], position[2]);
+					let closest = 0, maxLen = Number.POSITIVE_INFINITY;
+					pathPoints.forEach((pt, i) => { const len = pt.distanceTo(p); if (len < maxLen) { closest = i; maxLen = len; } });
+					return closest;
+				},
+				GetPointOnPath: (inFraction) => {
+					const a = Math.floor(inFraction);
+					const b = Math.ceil(inFraction + 0.0001) % pointResolution;
+					const percent = inFraction - a;
+					const position = new THREE.Vector3().lerpVectors(pathPoints[a], pathPoints[b], percent);
+					const tangent = new THREE.Vector3().subVectors(pathPoints[b], pathPoints[a]).normalize();
+					const binormal = new THREE.Vector3().crossVectors(tangent, normalVec).normalize();
+					return { position: position.toArray(), tangent: tangent.toArray(), normal: normalVec.toArray(), binormal: binormal.toArray() };
+				},
+			};
+			const path = new Jolt.PathConstraintPath.implement(pathImpl);
+			path.SetIsLooping(true);
+
+			const positionMaterial = new THREE.MeshPhongMaterial({ color: '#00ff00' });
+			const positionGeo = new THREE.SphereGeometry(0.25, 32, 32);
+			function renderPathData(parent, constraint) {
+				parent.add(pathMesh.clone());
+				const pos = new THREE.Mesh(positionGeo, positionMaterial);
+				parent.add(pos);
+				const tanLine = new Line3DMesh([new THREE.Vector3(), new THREE.Vector3()], '#FF0000'); pos.add(tanLine.getMesh());
+				const normLine = new Line3DMesh([new THREE.Vector3(), new THREE.Vector3()], '#00FF00'); pos.add(normLine.getMesh());
+				const binLine = new Line3DMesh([new THREE.Vector3(), new THREE.Vector3()], '#FF00FF'); pos.add(binLine.getMesh());
+				updates.push(() => {
+					const d = pathImpl.GetPointOnPath(constraint.GetPathFraction());
+					pos.position.fromArray(d.position);
+					tanLine._points[1].fromArray(d.tangent); tanLine.update();
+					normLine._points[1].fromArray(d.normal); normLine.update();
+					binLine._points[1].fromArray(d.binormal); binLine.update();
+				});
+			}
+
+			const rotationTypes = [
+				['#ff0000', Jolt.EPathRotationConstraintType.Free],
+				['#00ff00', Jolt.EPathRotationConstraintType.ConstrainAroundTangent],
+				['#0000ff', Jolt.EPathRotationConstraintType.ConstrainAroundNormal],
+				['#ff00ff', Jolt.EPathRotationConstraintType.ConstrainAroundBinormal],
+				['#ffff00', Jolt.EPathRotationConstraintType.ConstrainToPath],
+				['#00ffff', Jolt.EPathRotationConstraintType.FullyConstrained],
+			];
+			const layout = [[-8, 0], [0, 0], [8, 0], [-8, 8], [0, 8], [8, 8]];
+			rotationTypes.forEach(([color, type], i) => {
+				const [ox, oz] = layout[i];
+				const box1 = createBox([ox, 5, oz], [0, 0, 0, 1], [0.5, 0.1, 0.5], Jolt.EMotionType.Static, LAYER_NON_MOVING);
+				const anchor = dynamicObjects[dynamicObjects.length - 1];   // box1's mesh holds the path graphics
+				const box2 = createBox([ox + 2.5, 5, oz], [0, 0, 0, 1], [0.5, 0.1, 0.5], Jolt.EMotionType.Dynamic, LAYER_MOVING, color);
+				const settings = new Jolt.PathConstraintSettings();
+				settings.mRotationConstraintType = type;
+				const constraint = settings.Create(box1, box2);   // RTTI -> PathConstraint
+				constraint.SetPath(path, 0);
+				physicsSystem.AddConstraint(constraint);
+				constraint.SetPositionMotorState(Jolt.EMotorState.Velocity);
+				constraint.SetTargetVelocity(2);
+				renderPathData(anchor, constraint);
+			});
+		</script>
+	</body>
+</html>

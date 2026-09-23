@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js snapshot demo<br/>
+		The simulation state is saved at 4 moments; click a button to restore it (SaveState / RestoreState)<br/>
+		<button id="tick-0" disabled>Restore t=1s</button>
+		<button id="tick-1" disabled>Restore t=2s</button>
+		<button id="tick-2" disabled>Restore t=3s</button>
+		<button id="tick-3" disabled>Restore t=4s</button>
+		</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, createBox, addToScene, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+			const snapshots = [];
+			const buttons = [0, 1, 2, 3].map((i) => document.getElementById('tick-' + i));
+			buttons.forEach((e, i) => {
+				snapshots.push(new Jolt.StateRecorderImpl());
+				e.isSet = false;
+				e.addEventListener('click', () => {
+					if (!e.disabled) {
+						const s = snapshots[i];
+						s.Rewind();                 // rewind the recorder before restoring
+						physicsSystem.RestoreState(s);
+					}
+				});
+			});
+
+			initExample(Jolt, (time, deltaTime) => {
+				const i = parseInt(time) - 1;
+				if (buttons[i] && buttons[i].isSet == false) {
+					buttons[i].isSet = true;
+					physicsSystem.SaveState(snapshots[i]);
+					if (i == 3) buttons.forEach((button) => (button.disabled = false));
+				}
+			});
+			const { physicsSystem, bodyInterface } = Example;
+			const quatZ = (angle) => { const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle); return [q.x, q.y, q.z, q.w]; };
+
+			createFloor();
+			createBox([-12, 8, -5], quatZ(0.2 * Math.PI), [0.1, 10, 1], Jolt.EMotionType.Static, LAYER_NON_MOVING);
+			createBox([12, 8, -5], quatZ(-0.2 * Math.PI), [0.1, 10, 1], Jolt.EMotionType.Static, LAYER_NON_MOVING);
+
+			const shape = new Jolt.SphereShape(0.5);
+			const creationSettings = new Jolt.BodyCreationSettings(shape, [0, 0, 0], [0, 0, 0, 1], Jolt.EMotionType.Dynamic, LAYER_MOVING);
+			creationSettings.mAllowedDOFs = Jolt.EAllowedDOFs.Plane2D;
+			for (let x = 0; x < 20; ++x)
+				for (let y = 0; y < 10; ++y) {
+					creationSettings.mPosition = [-10 + x, 15 + y, -5];
+					addToScene(bodyInterface.CreateBody(creationSettings), 0xff0000);
+				}
+			physicsSystem.SetGravity([0, -1, 0]);
+		</script>
+	</body>
+</html>

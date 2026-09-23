@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="../style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js soft body cubes demo<br />
+		A grid of soft "jelly" cubes with varying edge/volume compliance dropped onto the floor</div>
+
+		<script type="module">
+			import initJolt from '../../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from '../js/example.js';
+			import { initExample, createFloor, addSoftBodyToScene, dynamicObjects, LAYER_MOVING } from '../js/example.js';
+			import { createCube } from '../js/soft-body-creator.js';
+
+			const jelly = { color: 0xffffff, transmission: 0.9, opacity: 0.7, metalness: 0, roughness: 0.2, ior: 2.5, thickness: 2.5, attenuationDistance: 0.25, specularIntensity: 1 };
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const { bodyInterface, camera } = Example;
+			createFloor();
+			camera.position.y -= 4; camera.position.z -= 4;
+
+			const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 4);
+			const rotation = [q.x, q.y, q.z, q.w];
+			function createGelCube(edgeCompliance, volumeCompliance, x, y, z, color) {
+				const sharedSettings = createCube(Jolt, 8, 0.2, edgeCompliance, volumeCompliance);
+				const bcs = new Jolt.SoftBodyCreationSettings(sharedSettings, [x, y, z], rotation, LAYER_MOVING);
+				bcs.mPressure = 2;
+				const mesh = addSoftBodyToScene(bodyInterface.CreateSoftBody(bcs), sharedSettings, 0xffffff);
+				const mat = new THREE.MeshPhysicalMaterial(jelly);
+				mat.attenuationColor.setRGB(color[0], color[1], color[2]);
+				mat.side = THREE.DoubleSide;
+				mesh.material = mat;
+			}
+			for (let y = 0; y < 4; y++)
+				for (let x = 0; x < 4; x++)
+					createGelCube(Math.pow(10, -3 - y), Math.pow(10, -6 - 0.4 * x), -10 + x * 5, 12, -10 + y * 5, [0.7 + 0.1 * y, 0.7 + x * .1, 1 - y * 0.1]);
+		</script>
+	</body>
+</html>

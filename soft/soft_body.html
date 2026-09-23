@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="../style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js soft body demo<br />
+		A corner-pinned cloth catching heavy spheres. <label><input type="checkbox" id="show-particles"> show particles</label></div>
+
+		<script type="module">
+			import initJolt from '../../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from '../js/example.js';
+			import { initExample, createFloor, addSoftBodyToScene, addToScene, LAYER_MOVING } from '../js/example.js';
+			import { createClothWithFixatedCorners } from '../js/soft-body-creator.js';
+
+			const Jolt = await initJolt();
+			const IDENT = [0, 0, 0, 1];
+			let markers = null;
+
+			initExample(Jolt, onUpdate);
+			const { bodyInterface, scene } = Example;
+			createFloor();
+
+			// A 40x40 cloth pinned at its four corners, held in place (mUpdatePosition = false)
+			const sharedSettings = createClothWithFixatedCorners(Jolt, 40, 40, 0.5);
+			const bcs = new Jolt.SoftBodyCreationSettings(sharedSettings, [0, 10, 0], IDENT, LAYER_MOVING);
+			bcs.mUpdatePosition = false;
+			const softBody = bodyInterface.CreateSoftBody(bcs);
+			const clothMesh = addSoftBodyToScene(softBody, sharedSettings, 0xffffff);
+
+			// Heavy spheres to fall onto the cloth
+			const colors = [0xff0000, 0xd9b1a3, 0x4d4139, 0xccad33, 0xf2ff40, 0x00ff00, 0x165943, 0x567371, 0x80d5ff, 0x69778c];
+			for (let s = 0; s < 10; ++s) {
+				const shape = new Jolt.SphereShape(0.75);
+				const cs = new Jolt.BodyCreationSettings(shape, [2.0 * Math.random(), 15 + 2.0 * 0.75 * s, 2.0 * Math.random()], IDENT, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				cs.mOverrideMassProperties = Jolt.EOverrideMassProperties.CalculateInertia;
+				cs.GetMassPropertiesOverride().mMass = 100.0;
+				addToScene(bodyInterface.CreateBody(cs), colors[s]);
+			}
+
+			// Optional particle markers: a little cross at each soft-body vertex. Added as a
+			// child of the cloth mesh so it inherits the same center-of-mass transform; the
+			// vertex positions are COM-relative, matching GetSoftBodyVertices().
+			function onUpdate() {
+				const show = document.getElementById('show-particles').checked;
+				if (show) {
+					const v = softBody.GetSoftBodyVertices();
+					const pts = [];
+					for (let i = 0; i < v.length; i += 3) {
+						const x = v[i], y = v[i + 1], z = v[i + 2];
+						pts.push(new THREE.Vector3(x - 0.1, y, z), new THREE.Vector3(x + 0.1, y, z));
+						pts.push(new THREE.Vector3(x, y - 0.1, z), new THREE.Vector3(x, y + 0.1, z));
+						pts.push(new THREE.Vector3(x, y, z - 0.1), new THREE.Vector3(x, y, z + 0.1));
+					}
+					if (markers == null) {
+						markers = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffff00 }));
+						clothMesh.add(markers);
+					} else {
+						markers.geometry.setFromPoints(pts);
+					}
+				} else if (markers != null) {
+					clothMesh.remove(markers);
+					markers = null;
+				}
+			}
+		</script>
+	</body>
+</html>

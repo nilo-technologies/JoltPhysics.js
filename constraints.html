@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js constraints demo<br/>
+		Chains of boxes joined by every constraint type (fixed, point, distance, hinge, slider, cone, swing-twist, six-DOF)</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, addToScene, DegreesToRadians, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const { physicsSystem, bodyInterface, camera } = Example;
+			camera.position.set(10, 30, 30);
+
+			const norm = (v) => new THREE.Vector3(v[0], v[1], v[2]).normalize().toArray();
+			const perp = (v) => {  // any unit vector perpendicular to v
+				const a = new THREE.Vector3(v[0], v[1], v[2]).normalize();
+				const b = Math.abs(a.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+				return new THREE.Vector3().crossVectors(a, b).normalize().toArray();
+			};
+
+			createFloor();
+
+			let filter = new Jolt.GroupFilterTable(10);
+			for (let z = 0; z < 9; ++z)
+				filter.DisableCollision(z, z + 1);
+			const shape = new Jolt.BoxShape([0.5, 0.5, 0.5]);
+
+			let px = -15;      // x of the current chain
+			let groupId = 0;
+
+			// Build a chain of 10 boxes (z=0 static anchor, z=1..9 dynamic) joined by a
+			// constraint. `settings` is the (reused) constraint settings; setPoints(z)
+			// positions its attach points for the joint between box z-1 and box z.
+			function makeChain(settings, setPoints) {
+				let prevBody = null;
+				for (let z = 0; z < 10; ++z) {
+					const bcs = new Jolt.BodyCreationSettings(shape, [px, 20, z], [0, 0, 0, 1],
+						z == 0 ? Jolt.EMotionType.Static : Jolt.EMotionType.Dynamic,
+						z == 0 ? LAYER_NON_MOVING : LAYER_MOVING);
+					const cg = bcs.GetCollisionGroup();
+					cg.SetGroupFilter(filter); cg.SetGroupID(groupId); cg.SetSubGroupID(z);
+					const body = bodyInterface.CreateBody(bcs);
+					addToScene(body, 0xff0000);
+					if (z == 9)
+						bodyInterface.AddImpulse(body.GetID(), [1000, 0, 0]);
+					if (prevBody != null) {
+						if (setPoints) setPoints(z);
+						physicsSystem.AddConstraint(settings.Create(prevBody, body));
+					}
+					prevBody = body;
+				}
+				groupId++; px += 5;
+			}
+
+			// Fixed
+			{
+				const c = new Jolt.FixedConstraintSettings();
+				c.mAutoDetectPoint = true;
+				makeChain(c, null);
+			}
+			// Point
+			{
+				const c = new Jolt.PointConstraintSettings();
+				makeChain(c, (z) => { c.mPoint1 = c.mPoint2 = [px, 20, z - 0.5]; });
+			}
+			// Distance
+			{
+				const c = new Jolt.DistanceConstraintSettings();
+				c.mMinDistance = 0; c.mMaxDistance = 1;
+				makeChain(c, (z) => { c.mPoint1 = c.mPoint2 = [px, 20, z - 0.5]; });
+			}
+			// Hinge
+			{
+				const c = new Jolt.HingeConstraintSettings();
+				c.mHingeAxis1 = c.mHingeAxis2 = [1, 0, 0];
+				c.mNormalAxis1 = c.mNormalAxis2 = [0, 1, 0];
+				makeChain(c, (z) => { c.mPoint1 = c.mPoint2 = [px, 19.5, z - 0.5]; });
+			}
+			// Slider
+			{
+				const c = new Jolt.SliderConstraintSettings();
+				const axis = norm([0, -1, 1]);
+				c.mSliderAxis1 = c.mSliderAxis2 = axis;
+				c.mNormalAxis1 = c.mNormalAxis2 = perp(axis);
+				c.mLimitsMin = 0; c.mLimitsMax = 1;
+				makeChain(c, (z) => { c.mPoint1 = c.mPoint2 = [px, 20, z - 0.5]; });
+			}
+			// Cone
+			{
+				const c = new Jolt.ConeConstraintSettings();
+				c.mTwistAxis1 = c.mTwistAxis2 = [0, 0, 1];
+				c.mHalfConeAngle = 0.1 * Math.PI;
+				makeChain(c, (z) => { c.mPoint1 = c.mPoint2 = [px, 20, z]; });
+			}
+			// Swing-twist
+			{
+				const c = new Jolt.SwingTwistConstraintSettings();
+				c.mTwistAxis1 = c.mTwistAxis2 = [0, 0, 1];
+				c.mPlaneAxis1 = c.mPlaneAxis2 = [1, 0, 0];
+				c.mNormalHalfConeAngle = 0.2 * Math.PI;
+				c.mPlaneHalfConeAngle = 0.1 * Math.PI;
+				c.mTwistMinAngle = -0.3 * Math.PI;
+				c.mTwistMaxAngle = 0.4 * Math.PI;
+				makeChain(c, (z) => { c.mPosition1 = c.mPosition2 = [px, 20, z]; });
+			}
+			// Six-DOF
+			{
+				const c = new Jolt.SixDOFConstraintSettings();
+				c.mAxisX1 = c.mAxisX2 = [0, 0, 1];
+				c.mAxisY1 = c.mAxisY2 = [1, 0, 0];
+				const EAxis = Jolt.SixDOFConstraintSettings_EAxis;
+				c.SetLimitedAxis(EAxis.TranslationX, -0.1, 0.1);
+				c.SetLimitedAxis(EAxis.TranslationY, -0.1, 0.1);
+				c.SetLimitedAxis(EAxis.TranslationZ, -0.1, 0.1);
+				const maxAngle = DegreesToRadians(10);
+				c.SetLimitedAxis(EAxis.RotationX, -maxAngle, maxAngle);
+				c.SetLimitedAxis(EAxis.RotationY, -maxAngle, maxAngle);
+				c.SetLimitedAxis(EAxis.RotationZ, -maxAngle, maxAngle);
+				makeChain(c, (z) => { c.mPosition1 = c.mPosition2 = [px, 20, z]; });
+			}
+		</script>
+	</body>
+</html>
