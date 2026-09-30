@@ -196,9 +196,10 @@ export interface NiloContactsBufferHandle {
   readonly removedCount: number;
 }
 export interface JoltFacade {
+  /** \`numIterations\` feeds the impulse estimate (default 4). */
   createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
-  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // after reading
-  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step
+  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // between steps, once read
+  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step, before reading
   getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
   getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
   destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;

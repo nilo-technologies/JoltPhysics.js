@@ -96,6 +96,7 @@ private:
 #endif // __EMSCRIPTEN_PTHREADS__
 
 // Unless sliding is allowed, a still, walkable contact stops the character on gentle slopes.
+// Set the flag before each ExtendedUpdate, which is when OnContactSolve reads it.
 class NiloCharacterContactListener : public CharacterContactListener {
 public:
     void SetAllowSliding(bool inAllowSliding) { mAllowSliding = inAllowSliding; }
