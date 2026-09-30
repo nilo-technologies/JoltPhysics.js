@@ -31,7 +31,7 @@ try {
   outMeta = jolt._outMeta();     // [{cls, method, names:[…], sizes:[…], outTs:[…], passKinds:[…], passTs:[…]}]
   ctorMeta = jolt._ctorMeta();   // {ClassName: [{n, t?}, …]}
   retMeta = jolt._retMeta();     // [{cls, method, tsType}]
-  layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody}
+  layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody, nilo*}
 } catch (e) {
   fail(`failed to load probe binary "${probePath}": ${e?.message ?? e}`);
 }
@@ -185,7 +185,29 @@ export type ActiveBodyState = {
 export interface ActiveBodyBufferHandle {
   readonly bodyCount: number;
 }
+/** A contact added during the step, as recorded by NiloContactListener. \`impulse\` is Jolt's
+ * EstimateCollisionResponse total normal impulse (kg m/s); 0 for triggers and non-dynamic pairs. */
+export type NiloContactAdded = {
+  body1: number; body2: number; objectLayer1: number; objectLayer2: number; isTrigger: boolean;
+  point: Vec3; normal: Vec3; impulse: number;
+};
+export type NiloContactRemoved = { body1: number; body2: number };
+/** Nilo's contacts for one step (see NiloContacts.h). Created with a NiloContactListener installed
+ * on the physics system; operated via the module-level *NiloContacts* functions on JoltFacade. */
+export interface NiloContactsBufferHandle {
+  readonly addedCount: number;
+  readonly removedCount: number;
+}
 export interface JoltFacade {
+  /** Installs a NiloContactListener on \`physicsSystem\`. \`numIterations\` feeds EstimateCollisionResponse (default 4). */
+  createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
+  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // before the update
+  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step
+  getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
+  getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
+  destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;
+  createNiloContactAdded(): NiloContactAdded;
+  createNiloContactRemoved(): NiloContactRemoved;
   createContactBuffer(physicsSystem: PhysicsSystem): ContactBuffer;
   clearContactBuffer(buffer: ContactBuffer): void;    // before Step
   updateContactBuffer(buffer: ContactBuffer): void;   // after Step

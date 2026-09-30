@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "JoltJS.h"
+#include "NiloContacts.h"
 
 #include "Jolt/Physics/Body/BodyFilter.h"
 #include "Jolt/Physics/Body/BodyLock.h"
@@ -2549,6 +2550,25 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("PointsF32Ptr",     &ContactListenerBuffer::PointsF32Ptr)
         .function("RemovedI32Ptr",    &ContactListenerBuffer::RemovedI32Ptr);
 
+    // Nilo contact capture (see NiloContacts.h) — install the listeners, Clear() the buffer
+    // before the update, read it via post.js after
+    jolt_class_<nilo::NiloContactsBuffer>("NiloContactsBuffer")
+        .constructor<>()
+        .function("Clear",           &nilo::NiloContactsBuffer::Clear)
+        .function("GetAddedCount",   &nilo::NiloContactsBuffer::GetAddedCount)
+        .function("GetRemovedCount", &nilo::NiloContactsBuffer::GetRemovedCount)
+        .function("AddedI32Ptr",     &nilo::NiloContactsBuffer::AddedI32Ptr)
+        .function("AddedF32Ptr",     &nilo::NiloContactsBuffer::AddedF32Ptr)
+        .function("RemovedI32Ptr",   &nilo::NiloContactsBuffer::RemovedI32Ptr);
+    jolt_class_<nilo::NiloContactListener, base<ContactListener>>("NiloContactListener")
+        .constructor("buffer, physicsSystem, numIterations",
+            +[](nilo::NiloContactsBuffer *b, const PhysicsSystem *s, uint n) { return new nilo::NiloContactListener(b, s, n); },
+            allow_raw_pointers());
+    jolt_class_<nilo::NiloCharacterContactListener, base<CharacterContactListener>>("NiloCharacterContactListener")
+        .constructor<>()
+        .function("SetAllowSliding(allowSliding)", &nilo::NiloCharacterContactListener::SetAllowSliding)
+        .function("GetAllowSliding",               &nilo::NiloCharacterContactListener::GetAllowSliding);
+
     // post-step active body snapshot — call Refresh() after Step(); read via post.js
     jolt_class_<ActiveBodyBuffer>("ActiveBodyBuffer")
         .constructor<>()
@@ -4259,6 +4279,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
         o.set("pointF32",   layout::pointF32);
         o.set("removedI32", layout::removedI32);
         o.set("activeBody", layout::activeBody);
+        o.set("niloAddedI32",   nilo::layout::addedI32);
+        o.set("niloAddedF32",   nilo::layout::addedF32);
+        o.set("niloRemovedI32", nilo::layout::removedI32);
         return o;
     });
 

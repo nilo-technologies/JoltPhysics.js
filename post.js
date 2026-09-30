@@ -105,6 +105,9 @@
   const POINT_F32_STRIDE   = LAYOUT['pointF32'];   // on1(xyz), on2(xyz)
   const REMOVED_I32_STRIDE = LAYOUT['removedI32']; // body1, subShape1, body2, subShape2
   const ACTIVE_BODY_STRIDE = LAYOUT['activeBody']; // id(u32), px,py,pz, rx,ry,rz,rw, lvx,lvy,lvz, avx,avy,avz
+  const NILO_ADDED_I32_STRIDE   = LAYOUT['niloAddedI32'];   // body1, body2, objectLayer1, objectLayer2, isTrigger
+  const NILO_ADDED_F32_STRIDE   = LAYOUT['niloAddedF32'];   // point(xyz), normal(xyz), impulse
+  const NILO_REMOVED_I32_STRIDE = LAYOUT['niloRemovedI32']; // body1, body2
 
   // ---- contact buffer ----
   // Public API names and property names use string-key bracket notation so closure
@@ -210,6 +213,70 @@
     impl['delete']();
   }
 
+  // ---- nilo contacts buffer (see NiloContacts.h) ----
+
+  function createNiloContactsBuffer(physicsSystem, numIterations) {
+    const impl = new Module['NiloContactsBuffer']();
+    const listener = new Module['NiloContactListener'](impl, physicsSystem,
+      numIterations === undefined ? 4 : numIterations);
+    physicsSystem['SetContactListener'](listener);
+    return {
+      '_impl': impl,
+      '_listener': listener,
+      '_sys': physicsSystem,   // kept so destroy can unregister the listener before freeing it
+      'addedCount': 0, 'removedCount': 0,
+      _addedI32Base: 0, _addedF32Base: 0, _removedI32Base: 0,
+    };
+  }
+
+  function clearNiloContactsBuffer(buf) {
+    buf['_impl']['Clear']();
+    buf['addedCount'] = buf['removedCount'] = 0;
+  }
+
+  function updateNiloContactsBuffer(buf) {
+    // Cache base offsets only; HEAP* views are re-grabbed per read (heap growth detaches them).
+    const impl = buf['_impl'];
+    buf['addedCount']   = impl['GetAddedCount']();
+    buf['removedCount'] = impl['GetRemovedCount']();
+    buf._addedI32Base   = impl['AddedI32Ptr']()   >>> 2;
+    buf._addedF32Base   = impl['AddedF32Ptr']()   >>> 2;
+    buf._removedI32Base = impl['RemovedI32Ptr']() >>> 2;
+  }
+
+  function getNiloContactAddedAt(buf, out, i) {
+    const i32 = Module['HEAP32'], f32 = Module['HEAPF32'];
+    const iBase = buf._addedI32Base + i * NILO_ADDED_I32_STRIDE;
+    const fBase = buf._addedF32Base + i * NILO_ADDED_F32_STRIDE;
+    out['body1']        = i32[iBase]     >>> 0;
+    out['body2']        = i32[iBase + 1] >>> 0;
+    out['objectLayer1'] = i32[iBase + 2];
+    out['objectLayer2'] = i32[iBase + 3];
+    out['isTrigger']    = i32[iBase + 4] !== 0;
+    out['point'][0]     = f32[fBase];     out['point'][1]  = f32[fBase + 1]; out['point'][2]  = f32[fBase + 2];
+    out['normal'][0]    = f32[fBase + 3]; out['normal'][1] = f32[fBase + 4]; out['normal'][2] = f32[fBase + 5];
+    out['impulse']      = f32[fBase + 6];
+    return out;
+  }
+
+  function getNiloContactRemovedAt(buf, out, i) {
+    const i32 = Module['HEAP32'];
+    const iBase = buf._removedI32Base + i * NILO_REMOVED_I32_STRIDE;
+    out['body1'] = i32[iBase]     >>> 0;
+    out['body2'] = i32[iBase + 1] >>> 0;
+    return out;
+  }
+
+  function destroyNiloContactsBuffer(buf) {
+    // Unregister before freeing, only if the system still points at our listener (see
+    // destroyContactBuffer for why isAliasOf, and why `current` is not deleted).
+    const sys = buf['_sys'], listener = buf['_listener'];
+    const current = sys['GetContactListener']();
+    if (current && listener['isAliasOf'](current)) sys['SetContactListener'](null);
+    listener['delete']();
+    buf['_impl']['delete']();
+  }
+
   // ---- active body buffer ----
 
   function createActiveBodyBuffer(physicsSystem) {
@@ -252,6 +319,9 @@
     'normal': [0, 0, 0], 'penetration': 0, 'pointCount': 0, _ptStart: 0, _buf: null });
   const createContactPoint    = () => ({ 'on1': [0, 0, 0], 'on2': [0, 0, 0] });
   const createRemovedContact  = () => ({ 'body1': 0, 'subShape1': 0, 'body2': 0, 'subShape2': 0 });
+  const createNiloContactAdded   = () => ({ 'body1': 0, 'body2': 0, 'objectLayer1': 0, 'objectLayer2': 0,
+    'isTrigger': false, 'point': [0, 0, 0], 'normal': [0, 0, 0], 'impulse': 0 });
+  const createNiloContactRemoved = () => ({ 'body1': 0, 'body2': 0 });
   const createActiveBodyState = () => ({ 'id': 0, 'position': [0, 0, 0], 'rotation': [0, 0, 0, 1],
     'linVel': [0, 0, 0], 'angVel': [0, 0, 0] });
 
@@ -265,6 +335,13 @@
     'getContactBufferRemovedAt':   getContactBufferRemovedAt,
     'getContactBufferPointAt':     getContactBufferPointAt,
     'destroyContactBuffer':        destroyContactBuffer,
+    // nilo contacts buffer
+    'createNiloContactsBuffer':    createNiloContactsBuffer,
+    'clearNiloContactsBuffer':     clearNiloContactsBuffer,
+    'updateNiloContactsBuffer':    updateNiloContactsBuffer,
+    'getNiloContactAddedAt':       getNiloContactAddedAt,
+    'getNiloContactRemovedAt':     getNiloContactRemovedAt,
+    'destroyNiloContactsBuffer':   destroyNiloContactsBuffer,
     // active body buffer
     'createActiveBodyBuffer':      createActiveBodyBuffer,
     'updateActiveBodyBuffer':      updateActiveBodyBuffer,
@@ -274,6 +351,8 @@
     'createContact':               createContact,
     'createContactPoint':          createContactPoint,
     'createRemovedContact':        createRemovedContact,
+    'createNiloContactAdded':      createNiloContactAdded,
+    'createNiloContactRemoved':    createNiloContactRemoved,
     'createActiveBodyState':       createActiveBodyState,
   });
 })();
