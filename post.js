@@ -216,6 +216,8 @@
   // ---- nilo contacts buffer (see NiloContacts.h) ----
 
   function createNiloContactsBuffer(physicsSystem, numIterations) {
+    // Compiled out of the multithreaded build, where contact callbacks run on job threads.
+    if (!Module['NiloContactsBuffer']) throw new Error('JoltPhysics.js: NiloContactsBuffer is only available in single-threaded builds');
     const impl = new Module['NiloContactsBuffer']();
     const listener = new Module['NiloContactListener'](impl, physicsSystem,
       numIterations === undefined ? 4 : numIterations);
@@ -250,8 +252,8 @@
     const fBase = buf._addedF32Base + i * NILO_ADDED_F32_STRIDE;
     out['body1']        = i32[iBase]     >>> 0;
     out['body2']        = i32[iBase + 1] >>> 0;
-    out['objectLayer1'] = i32[iBase + 2];
-    out['objectLayer2'] = i32[iBase + 3];
+    out['objectLayer1'] = i32[iBase + 2] >>> 0;
+    out['objectLayer2'] = i32[iBase + 3] >>> 0;
     out['isTrigger']    = i32[iBase + 4] !== 0;
     out['point'][0]     = f32[fBase];     out['point'][1]  = f32[fBase + 1]; out['point'][2]  = f32[fBase + 2];
     out['normal'][0]    = f32[fBase + 3]; out['normal'][1] = f32[fBase + 4]; out['normal'][2] = f32[fBase + 5];

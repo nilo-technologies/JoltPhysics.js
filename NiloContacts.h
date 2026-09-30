@@ -5,8 +5,9 @@
 //   - NiloCharacterContactListener applies Nilo's slide prevention natively, from a flag
 //     JS sets before the update.
 // Kept in its own header (and its own sections of bindings.cpp / post.js) so upstream
-// merges rarely touch it. Single-threaded only: Jolt fires contact callbacks from job
-// threads in the MT build, which would need the buffer guarded by a mutex.
+// merges rarely touch it. The contacts buffer and its listener are single-threaded builds
+// only: the MT build fires contact callbacks from job threads, so they are compiled out
+// there. The character listener is safe in both, since ExtendedUpdate runs on its caller.
 #pragma once
 
 #include "Jolt/Physics/Collision/EstimateCollisionResponse.h"
@@ -29,6 +30,7 @@ namespace layout {
                   "nilo layout strides changed — update NiloContactListener packing and post.js readers");
 }
 
+#ifndef __EMSCRIPTEN_PTHREADS__
 // Flat wasm-heap arrays of the contacts added and removed since the last Clear(). The
 // vectors keep their capacity across Clear(), so there is no allocation after warm-up.
 class NiloContactsBuffer {
@@ -105,6 +107,7 @@ private:
     const PhysicsSystem *mSystem;
     uint mNumIterations;
 };
+#endif // __EMSCRIPTEN_PTHREADS__
 
 // Slide prevention for one CharacterVirtual: while sliding is not allowed, a contact that is
 // not moving and not too steep cancels the character's velocity, so it stands still on gentle
@@ -117,6 +120,7 @@ public:
     void OnContactSolve(const CharacterVirtual *c, const BodyID &, const SubShapeID &, RVec3Arg,
                         Vec3Arg normal, Vec3Arg contactVelocity, const PhysicsMaterial *,
                         Vec3Arg, Vec3 &ioNewCharacterVelocity) override {
+        // A ~1 mm/s dead zone (1e-6 on the squared speed): Nilo's threshold, deliberately looser than IsNearZero.
         if (!mAllowSliding && contactVelocity.LengthSq() < 1.0e-6f && !c->IsSlopeTooSteep(normal))
             ioNewCharacterVelocity = Vec3::sZero();
     }
