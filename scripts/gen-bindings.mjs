@@ -185,25 +185,20 @@ export type ActiveBodyState = {
 export interface ActiveBodyBufferHandle {
   readonly bodyCount: number;
 }
-/** A contact added during the step, as recorded by NiloContactListener. \`point\` is the average of
- * the world-space contact points on body1; \`normal\` points from body1 toward body2. \`impulse\` is
- * Jolt's EstimateCollisionResponse total normal impulse (kg m/s); 0 for triggers and non-dynamic pairs. */
+/** \`point\` averages body1's world contact points; \`impulse\` is the estimated normal impulse (0 for triggers). */
 export type NiloContactAdded = {
   body1: number; body2: number; objectLayer1: number; objectLayer2: number; isTrigger: boolean;
   point: Vec3; normal: Vec3; impulse: number;
 };
 export type NiloContactRemoved = { body1: number; body2: number };
-/** Nilo's contacts for one step (see NiloContacts.h). Created with a NiloContactListener installed
- * on the physics system; operated via the module-level *NiloContacts* functions on JoltFacade. */
 export interface NiloContactsBufferHandle {
   readonly addedCount: number;
   readonly removedCount: number;
 }
 export interface JoltFacade {
-  /** Installs a NiloContactListener on \`physicsSystem\`. \`numIterations\` feeds EstimateCollisionResponse (default 4). */
   createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
-  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // between steps, once read
-  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step, before reading
+  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // after reading
+  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step
   getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
   getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
   destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;

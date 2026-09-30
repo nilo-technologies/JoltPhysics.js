@@ -213,10 +213,9 @@
     impl['delete']();
   }
 
-  // ---- nilo contacts buffer (see NiloContacts.h) ----
+  // ---- nilo contacts buffer ----
 
   function createNiloContactsBuffer(physicsSystem, numIterations) {
-    // Compiled out of the multithreaded build, where contact callbacks run on job threads.
     if (!Module['NiloContactsBuffer']) throw new Error('JoltPhysics.js: NiloContactsBuffer is only available in single-threaded builds');
     const impl = new Module['NiloContactsBuffer']();
     const listener = new Module['NiloContactListener'](impl, physicsSystem,
@@ -225,7 +224,7 @@
     return {
       '_impl': impl,
       '_listener': listener,
-      '_sys': physicsSystem,   // kept so destroy can unregister the listener before freeing it
+      '_sys': physicsSystem,
       'addedCount': 0, 'removedCount': 0,
       _addedI32Base: 0, _addedF32Base: 0, _removedI32Base: 0,
     };
@@ -237,7 +236,6 @@
   }
 
   function updateNiloContactsBuffer(buf) {
-    // Cache base offsets only; HEAP* views are re-grabbed per read (heap growth detaches them).
     const impl = buf['_impl'];
     buf['addedCount']   = impl['GetAddedCount']();
     buf['removedCount'] = impl['GetRemovedCount']();
@@ -270,8 +268,7 @@
   }
 
   function destroyNiloContactsBuffer(buf) {
-    // Unregister before freeing, only if the system still points at our listener (see
-    // destroyContactBuffer for why isAliasOf, and why `current` is not deleted).
+    // Same unregister-then-free rules as destroyContactBuffer.
     const sys = buf['_sys'], listener = buf['_listener'];
     const current = sys['GetContactListener']();
     if (current && listener['isAliasOf'](current)) sys['SetContactListener'](null);

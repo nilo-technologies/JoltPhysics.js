@@ -2551,8 +2551,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("RemovedI32Ptr",    &ContactListenerBuffer::RemovedI32Ptr);
 
 #ifndef __EMSCRIPTEN_PTHREADS__
-    // Nilo contact capture (see NiloContacts.h) — install the listener, read the buffer via
-    // post.js after Step, and Clear() it before the next one. Single-threaded builds only.
+    // see NiloContacts.h; read via post.js
     jolt_class_<nilo::NiloContactsBuffer>("NiloContactsBuffer")
         .constructor<>()
         .function("Clear",           &nilo::NiloContactsBuffer::Clear)
@@ -3564,7 +3563,6 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mCanReceiveImpulses", &CharacterContactSettings::mCanReceiveImpulses);
     jolt_class_<CharacterContactListener>("CharacterContactListener")
         .allow_subclass<CharacterContactListenerWrapper>("CharacterContactListenerWrapper");
-    // Nilo's native slide prevention (see NiloContacts.h)
     jolt_class_<nilo::NiloCharacterContactListener, base<CharacterContactListener>>("NiloCharacterContactListener")
         .constructor<>()
         .function("SetAllowSliding(allowSliding)", &nilo::NiloCharacterContactListener::SetAllowSliding)

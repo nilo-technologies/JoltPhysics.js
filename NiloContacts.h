@@ -1,13 +1,5 @@
-// Nilo-specific contact capture. Everything here runs inside PhysicsSystem::Update and
-// CharacterVirtual::ExtendedUpdate without calling into JS:
-//   - NiloContactListener packs exactly the contact data Nilo consumes into a
-//     NiloContactsBuffer, read in bulk from the wasm heap after the step (post.js).
-//   - NiloCharacterContactListener applies Nilo's slide prevention natively, from a flag
-//     JS sets before the update.
-// Kept in its own header (and its own sections of bindings.cpp / post.js) so upstream
-// merges rarely touch it. The contacts buffer and its listener are single-threaded builds
-// only: the MT build fires contact callbacks from job threads, so they are compiled out
-// there. The character listener is safe in both, since ExtendedUpdate runs on its caller.
+// Nilo's contact listeners, which run without calling into JS. The contacts buffer is
+// single-threaded only: the MT build fires contact callbacks from job threads.
 #pragma once
 
 #include "Jolt/Physics/Collision/EstimateCollisionResponse.h"
@@ -19,9 +11,7 @@ namespace nilo {
 
 using namespace JPH;
 
-// Packed-buffer strides for NiloContactsBuffer. Exposed via _layoutMeta() and baked into
-// post.js at build time (__JOLT_LAYOUT__). The per-field read order in post.js still has to
-// match the packing order below by hand; the static_assert is a tripwire for stride changes.
+// Strides baked into post.js via _layoutMeta(); its read order must match this packing.
 namespace layout {
     constexpr int addedI32   = 5; // body1, body2, objectLayer1, objectLayer2, isTrigger
     constexpr int addedF32   = 7; // point(xyz), normal(xyz), impulse
@@ -31,8 +21,6 @@ namespace layout {
 }
 
 #ifndef __EMSCRIPTEN_PTHREADS__
-// Flat wasm-heap arrays of the contacts added and removed since the last Clear(). The
-// vectors keep their capacity across Clear(), so there is no allocation after warm-up.
 class NiloContactsBuffer {
 public:
     std::vector<int32_t> mAddedI32, mRemovedI32;
@@ -50,9 +38,7 @@ public:
     uintptr_t RemovedI32Ptr() const { return (uintptr_t)mRemovedI32.data(); }
 };
 
-// Records each added contact with its averaged world point, normal, object layers, trigger
-// flag and Jolt's estimated collision impulse, and each removed contact by its body pair.
-// Persisted contacts are not recorded. The buffer and physics system must outlive the listener.
+// Persisted contacts are not recorded. The buffer and system must outlive the listener.
 class NiloContactListener : public ContactListener {
 public:
     NiloContactListener(NiloContactsBuffer *inBuffer, const PhysicsSystem *inSystem, uint inNumIterations)
@@ -92,7 +78,7 @@ private:
         return m.mBaseOffset + sum / (float)count;
     }
 
-    // Total normal impulse over the manifold's points (kg m/s); 0 when neither body is dynamic.
+    // Total normal impulse over the manifold's points (kg m/s).
     float EstimateImpulse(const Body &b1, const Body &b2, const ContactManifold &m, const ContactSettings &s) const {
         if (!b1.IsDynamic() && !b2.IsDynamic()) return 0.0f;
         CollisionEstimationResult result;
@@ -109,9 +95,7 @@ private:
 };
 #endif // __EMSCRIPTEN_PTHREADS__
 
-// Slide prevention for one CharacterVirtual: while sliding is not allowed, a contact that is
-// not moving and not too steep cancels the character's velocity, so it stands still on gentle
-// slopes. JS sets the flag before each ExtendedUpdate (e.g. allowed while moving or airborne).
+// Unless sliding is allowed, a still, walkable contact stops the character on gentle slopes.
 class NiloCharacterContactListener : public CharacterContactListener {
 public:
     void SetAllowSliding(bool inAllowSliding) { mAllowSliding = inAllowSliding; }
@@ -120,7 +104,7 @@ public:
     void OnContactSolve(const CharacterVirtual *c, const BodyID &, const SubShapeID &, RVec3Arg,
                         Vec3Arg normal, Vec3Arg contactVelocity, const PhysicsMaterial *,
                         Vec3Arg, Vec3 &ioNewCharacterVelocity) override {
-        // A ~1 mm/s dead zone (1e-6 on the squared speed): Nilo's threshold, deliberately looser than IsNearZero.
+        // ~1 mm/s dead zone, looser than IsNearZero on purpose.
         if (!mAllowSliding && contactVelocity.LengthSq() < 1.0e-6f && !c->IsSlopeTooSteep(normal))
             ioNewCharacterVelocity = Vec3::sZero();
     }
