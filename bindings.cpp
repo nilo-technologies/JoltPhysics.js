@@ -2550,8 +2550,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("PointsF32Ptr",     &ContactListenerBuffer::PointsF32Ptr)
         .function("RemovedI32Ptr",    &ContactListenerBuffer::RemovedI32Ptr);
 
-    // Nilo contact capture (see NiloContacts.h) — install the listeners, Clear() the buffer
-    // before the update, read it via post.js after
+    // Nilo contact capture (see NiloContacts.h) — install the listeners, read the buffer via
+    // post.js after Step, and Clear() it before the next one
     jolt_class_<nilo::NiloContactsBuffer>("NiloContactsBuffer")
         .constructor<>()
         .function("Clear",           &nilo::NiloContactsBuffer::Clear)

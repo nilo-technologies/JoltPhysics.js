@@ -185,8 +185,9 @@ export type ActiveBodyState = {
 export interface ActiveBodyBufferHandle {
   readonly bodyCount: number;
 }
-/** A contact added during the step, as recorded by NiloContactListener. \`impulse\` is Jolt's
- * EstimateCollisionResponse total normal impulse (kg m/s); 0 for triggers and non-dynamic pairs. */
+/** A contact added during the step, as recorded by NiloContactListener. \`point\` is the average of
+ * the world-space contact points on body1; \`normal\` points from body1 toward body2. \`impulse\` is
+ * Jolt's EstimateCollisionResponse total normal impulse (kg m/s); 0 for triggers and non-dynamic pairs. */
 export type NiloContactAdded = {
   body1: number; body2: number; objectLayer1: number; objectLayer2: number; isTrigger: boolean;
   point: Vec3; normal: Vec3; impulse: number;
@@ -201,8 +202,8 @@ export interface NiloContactsBufferHandle {
 export interface JoltFacade {
   /** Installs a NiloContactListener on \`physicsSystem\`. \`numIterations\` feeds EstimateCollisionResponse (default 4). */
   createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
-  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // before the update
-  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step
+  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // between steps, once read
+  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step, before reading
   getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
   getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
   destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;

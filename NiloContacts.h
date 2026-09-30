@@ -29,8 +29,8 @@ namespace layout {
                   "nilo layout strides changed — update NiloContactListener packing and post.js readers");
 }
 
-// Flat wasm-heap tiers of the contacts added and removed during a step. Vectors keep
-// their capacity across Clear(), so there is no allocation after warm-up.
+// Flat wasm-heap arrays of the contacts added and removed since the last Clear(). The
+// vectors keep their capacity across Clear(), so there is no allocation after warm-up.
 class NiloContactsBuffer {
 public:
     std::vector<int32_t> mAddedI32, mRemovedI32;
