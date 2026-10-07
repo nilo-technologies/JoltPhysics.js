@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js soft body + constraints demo<br />
+		A cloth (SoftBody) with dihedral bend constraints, bouncing spheres, and a chain of distance constraints</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, createBox, createSphere, dynamicObjects, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+
+			// Ergonomic SoftBody cloth builder (mirrors Examples_old SoftBodyCreator.CreateCloth,
+			// but uses the new AddVertex/AddFace/CreateConstraints API — no raw structs).
+			function createCloth(gridX, gridZ, spacing, invMassFn, perturbFn, bendType) {
+				const offX = -0.5 * spacing * (gridX - 1), offZ = -0.5 * spacing * (gridZ - 1);
+				const ss = new Jolt.SoftBodySharedSettings();
+				for (let z = 0; z < gridZ; ++z)
+					for (let x = 0; x < gridX; ++x) {
+						const p = perturbFn(x, z);
+						ss.AddVertex([spacing * x + offX + p.x, p.y, spacing * z + offZ + p.z], invMassFn(x, z));
+					}
+				const vidx = (x, y) => x + y * gridX;
+				ss.CalculateEdgeLengths();
+				for (let z = 0; z < gridZ - 1; ++z)
+					for (let x = 0; x < gridX - 1; ++x) {
+						ss.AddFace(vidx(x, z), vidx(x, z + 1), vidx(x + 1, z + 1));
+						ss.AddFace(vidx(x, z), vidx(x + 1, z + 1), vidx(x + 1, z));
+					}
+				ss.CreateConstraints(1e-5, 1e-5, 1e-5, bendType, Jolt.ELRAType.None, 1.0); // compliance, shear, bend, LRA
+				ss.Optimize();
+				return ss;
+			}
+
+			// Build a deforming THREE mesh for a soft body: static face indices once, live
+			// vertex positions (COM-relative) refreshed each frame. Tracked like a rigid body
+			// via dynamicObjects (com:true) so the render loop sets its COM transform for us.
+			function addSoftBodyToScene(body, color) {
+				const id = body.GetID();
+				const faceIndices = sharedSettings.GetFaceIndices();
+				const numVertices = body.GetSoftBodyVertices().length / 3;
+				const geometry = new THREE.BufferGeometry();
+				const positions = new Float32Array(numVertices * 3);
+				geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+				geometry.setIndex(new THREE.BufferAttribute(faceIndices, 1));
+				const mesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }));
+				mesh.matrixAutoUpdate = false;
+				mesh.userData = { id, com: true };
+				Example.scene.add(mesh);
+				dynamicObjects.push(mesh);
+				return () => {
+					positions.set(body.GetSoftBodyVertices());
+					geometry.computeVertexNormals();
+					geometry.getAttribute('position').needsUpdate = true;
+					geometry.getAttribute('normal').needsUpdate = true;
+				};
+			}
+
+			let updateCloth = () => {};
+			initExample(Jolt, () => updateCloth());
+			const { physicsSystem, bodyInterface, camera } = Example;
+
+			camera.position.set(10, 30, 30); // Better position the camera
+			createFloor();
+
+			function xorshift32(a) {
+				a = new Uint32Array([a]);
+				return function () {
+					let x = a[0];
+					x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+					a[0] = x;
+					return a[0] / 0xFFFFFFFF;
+				};
+			}
+
+			const cNumVerticesX = 10, cNumVerticesZ = 30, cVertexSpacing = 0.5;
+			const inv_mass = (x, z) => z < 2 ? 0 : 1; // pin the top two rows
+			const random_float = (v) => 0.2 * v - 0.1;
+			const perturbation = (seed) => {
+				const random = xorshift32(seed);
+				return (_x, inZ) => ({ x: random_float(random()), y: inZ & 1 ? 0.1 : -0.1, z: random_float(random()) });
+			};
+
+			// Cloth with dihedral bend constraints
+			const sharedSettings = createCloth(cNumVerticesX, cNumVerticesZ, cVertexSpacing, inv_mass, perturbation(1234), Jolt.EBendType.Dihedral);
+			const cloth = new Jolt.SoftBodyCreationSettings(sharedSettings, [5, 10, 0], [0, 0, 0, 1], LAYER_MOVING);
+			const clothBody = bodyInterface.CreateSoftBody(cloth);
+			bodyInterface.AddBody(clothBody.GetID(), Jolt.EActivation.Activate);
+			updateCloth = addSoftBodyToScene(clothBody, 0x0000aa);
+
+			// A few bouncing spheres with increasing restitution
+			for (let i = 0; i < 3; i++) {
+				const ball = createSphere([-3 + i * 1.5, 4, 0], 0.5, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				bodyInterface.SetRestitution(ball.GetID(), 0.6 + 0.2 * i);
+			}
+
+			// A chain of boxes connected by distance constraints (first box is static).
+			// Gravity alone is boring — kick the last box so the constraints stretch.
+			let prevBox = null;
+			for (let z = 0; z < 10; ++z) {
+				const isStatic = z == 0;
+				const box = createBox([-10, 20, z], [0, 0, 0, 1], [0.5, 0.5, 0.5],
+					isStatic ? Jolt.EMotionType.Static : Jolt.EMotionType.Dynamic,
+					isStatic ? LAYER_NON_MOVING : LAYER_MOVING, 0xff0000);
+				if (prevBox != null) {
+					const cs = new Jolt.DistanceConstraintSettings();
+					cs.mPoint1 = [-10, 20, z - 0.5];
+					cs.mPoint2 = [-10, 20, z - 0.5];
+					cs.mMinDistance = 0;
+					cs.mMaxDistance = 1;
+					physicsSystem.AddConstraint(cs.Create(prevBox, box));
+				}
+				if (z == 9) bodyInterface.AddImpulse(box.GetID(), [1000, 0, 0]);
+				prevBox = box;
+			}
+		</script>
+	</body>
+</html>

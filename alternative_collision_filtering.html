@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js alternative collision filtering demo<br/>
+		Group/mask object layers: each colored shape only collides with its matching floor</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as Example from './js/example.js';
+			import { initExample, createBox, addToScene, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+
+			const GROUP_STATIC = 1;
+			const GROUP_FLOOR1 = 2;
+			const GROUP_FLOOR2 = 4;
+			const GROUP_FLOOR3 = 8;
+			const GROUP_ALL = GROUP_STATIC | GROUP_FLOOR1 | GROUP_FLOOR2 | GROUP_FLOOR3;
+
+			const setupMaskFiltering = (settings) => {
+				const objectFilter = new Jolt.ObjectLayerPairFilterMask();
+				const bpInterface = new Jolt.BroadPhaseLayerInterfaceMask(2);
+				bpInterface.ConfigureLayer(new Jolt.BroadPhaseLayer(0), GROUP_STATIC, 0);                          // static bit -> static broadphase layer
+				bpInterface.ConfigureLayer(new Jolt.BroadPhaseLayer(1), GROUP_FLOOR1 | GROUP_FLOOR2 | GROUP_FLOOR3, 0); // floor bits -> dynamic broadphase layer
+				settings.mObjectLayerPairFilter = objectFilter;
+				settings.mBroadPhaseLayerInterface = bpInterface;
+				settings.mObjectVsBroadPhaseLayerFilter = new Jolt.ObjectVsBroadPhaseLayerFilterMask(bpInterface);
+			};
+			initExample(Jolt, null, setupMaskFiltering);
+			const bodyInterface = Example.bodyInterface;
+			const sGetObjectLayer = (group, mask) => Jolt.ObjectLayerPairFilterMask.sGetObjectLayer(group, mask);
+
+			createBox([0, 0, 0], [0, 0, 0, 1], [50, 0.5, 50], Jolt.EMotionType.Static, sGetObjectLayer(GROUP_STATIC, GROUP_ALL));
+			createBox([0, 3, 0], [0, 0, 0, 1], [5, 0.5, 5], Jolt.EMotionType.Static, sGetObjectLayer(GROUP_STATIC, GROUP_FLOOR1), 0x9f0000);
+			createBox([0, 6, 0], [0, 0, 0, 1], [5, 0.5, 5], Jolt.EMotionType.Static, sGetObjectLayer(GROUP_STATIC, GROUP_FLOOR2), 0x009f00);
+			createBox([0, 9, 0], [0, 0, 0, 1], [5, 0.5, 5], Jolt.EMotionType.Static, sGetObjectLayer(GROUP_STATIC, GROUP_FLOOR3), 0x00009f);
+
+			for (let x = 0; x < 10; x++)
+				for (let z = 0; z < 10; z++)
+					for (let l = 0; l < 3; l++) {
+						const pos = [1.2 * x - 5.4, 12 + 2 * l, 1.2 * z - 5.4];
+						let shape, group, color;
+						switch (l) {
+							case 0: shape = new Jolt.BoxShape([0.5, 0.5, 0.5]); group = GROUP_FLOOR1; color = 0xff0000; break;
+							case 1: shape = new Jolt.SphereShape(0.5); group = GROUP_FLOOR2; color = 0x00ff00; break;
+							case 2: shape = new Jolt.CapsuleShape(0.5, 0.5); group = GROUP_FLOOR3; color = 0x0000ff; break;
+						}
+						const bcs = new Jolt.BodyCreationSettings(shape, pos, [0, 0, 0, 1], Jolt.EMotionType.Dynamic, sGetObjectLayer(group, GROUP_ALL));
+						addToScene(bodyInterface.CreateBody(bcs), color);
+					}
+		</script>
+	</body>
+</html>

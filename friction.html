@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js friction demo<br/>
+		Boxes with increasing friction (left to right), each given the same impulse</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, addToScene, LAYER_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const bodyInterface = Example.bodyInterface;
+
+			let floor = createFloor();
+			floor.SetFriction(1.0);
+
+			for (let i = 0; i < 10; i++) {
+				let shape = new Jolt.BoxShape([0.5, 0.5, 0.5]);
+				let creationSettings = new Jolt.BodyCreationSettings(shape, [-10.0 + 2.0 * i, 0.5, 0], [0, 0, 0, 1], Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				creationSettings.mFriction = 0.1 * i;
+				let body = bodyInterface.CreateBody(creationSettings);
+
+				const id = addToScene(body, 0x00ffff);
+				bodyInterface.AddImpulse(id, [0, 0, 10000.0]);
+			}
+		</script>
+	</body>
+</html>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js ray cast demo<br/>
+		Red rays; cyan markers = hit points; green lines = surface normals</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, createBox, addLine, addMarker, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const { jolt, physicsSystem } = Example;
+			const npq = physicsSystem.GetNarrowPhaseQuery();
+
+			createFloor();
+
+			// a row of boxes the rays will strike
+			for (let z = 0; z <= 20; z += 5)
+				createBox([0, 1, z], [0, 0, 0, 1], [1, 1, 1], Jolt.EMotionType.Static, LAYER_NON_MOVING, 0x00ff00);
+
+			const direction = [10, 0, 2];
+			const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+			const scale = (v, s) => [v[0] * s, v[1] * s, v[2] * s];
+			const drawRay = (origin) => addLine(origin, add(origin, direction), 0xff0000);
+			const drawHit = (hit) => {
+				addMarker(hit.point, 1, 0x00ffff);                              // hit point
+				addLine(hit.point, add(hit.point, scale(hit.normal, 2)), 0x00ff00);  // surface normal
+			};
+
+			// CastRayAll returns hits sorted near->far, each { bodyID, fraction, point, normal }.
+			const cast = (origin, closestOnly) => {
+				drawRay(origin);
+				const hits = npq.CastRayAll(new Jolt.RRayCast(origin, direction), LAYER_MOVING, jolt);
+				if (closestOnly) { if (hits.length) drawHit(hits[0]); }
+				else hits.forEach(drawHit);
+			};
+
+			cast([-5, 1, -1], false);   // all hits along the ray
+			cast([-5, 1, 4], false);    // all hits
+			cast([-5, 1, 9], true);     // closest hit only
+			cast([-5, 1, 14], false);   // all hits (incl. back faces)
+			cast([-5, 1, 19], false);   // all hits
+		</script>
+	</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js proper cleanup demo<br />
+		Creates a body, steps once, tears everything down and reports leaked memory (see console + below).</div>
+		<pre id="log" style="position:absolute; top:80px; left:10px; color:#fff; font-family:monospace"></pre>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+
+			const Jolt = await initJolt();
+			const logEl = document.getElementById('log');
+			const log = (msg) => { console.log(msg); logEl.textContent += msg + '\n'; };
+
+			// Under embind, EVERY object returned by `new Jolt.X()` / factories is a JS handle
+			// that must be .delete()d — including refcounted ones (shapes, materials, settings).
+			// A refcounted handle is itself a strong reference: .delete() releases that one
+			// reference, and the C++ object is freed once the LAST reference (a C++ owner or
+			// another JS handle) goes away. So it is always safe to delete a handle you created,
+			// even if something else still holds the object alive. The only handles you must NOT
+			// delete are those explicitly transferred to C++ ownership (see the JoltInterface
+			// interfaces below). Vec3/Quat/Mat4 are plain JS arrays here — nothing to clean up.
+
+			// Record how much heap we have to start with
+			const memoryFreeBefore = Jolt.JoltInterface.sGetFreeMemory();
+
+			// A minimal single-layer collision setup
+			const MY_LAYER = 0;
+			const objectFilter = new Jolt.ObjectLayerPairFilterTable(1);
+			objectFilter.EnableCollision(MY_LAYER, MY_LAYER);
+			const bpInterface = new Jolt.BroadPhaseLayerInterfaceTable(1, 1);
+			const bpLayer = new Jolt.BroadPhaseLayer(0);
+			bpInterface.MapObjectToBroadPhaseLayer(MY_LAYER, bpLayer);
+			bpLayer.delete();                                        // copied into bpInterface
+			const bpFilter = new Jolt.ObjectVsBroadPhaseLayerFilterTable(bpInterface, 1, objectFilter, 1);
+
+			// Initialize Jolt. The 3 interfaces above are now OWNED by the JoltInterface —
+			// its destructor deletes them, so we must NOT .delete() those handles ourselves.
+			const settings = new Jolt.JoltSettings();
+			settings.mObjectLayerPairFilter = objectFilter;
+			settings.mBroadPhaseLayerInterface = bpInterface;
+			settings.mObjectVsBroadPhaseLayerFilter = bpFilter;
+			const jolt = new Jolt.JoltInterface(settings);
+			settings.delete();                                       // fields copied into jolt
+
+			const physicsSystem = jolt.GetPhysicsSystem();
+			const bodyInterface = physicsSystem.GetBodyInterface();
+
+			// A box with a material, wrapped in a compound shape
+			const material = new Jolt.PhysicsMaterial();
+			const box = new Jolt.BoxShapeSettings([4, 0.5, 0.5]);
+			box.mConvexRadius = 0.05;
+			box.SetMaterial(material);                               // 'box' adds its own reference to 'material'
+			const boxResult = box.Create();
+			const boxShape = boxResult.Get();                        // compound AddShape takes a built Shape
+			const compound = new Jolt.StaticCompoundShapeSettings();
+			compound.AddShape([5, 0, 0], [0, 0, 0, 1], boxShape);
+			const shapeResult = compound.Create();
+			const shape = shapeResult.Get();
+
+			// Create + add the body
+			const creationSettings = new Jolt.BodyCreationSettings(shape, [1, 2, 3], [0, 0, 0, 1], Jolt.EMotionType.Dynamic, MY_LAYER);
+			const body = bodyInterface.CreateBody(creationSettings);
+			creationSettings.delete();                               // the shape reference went to 'body'
+			bodyInterface.AddBody(body.GetID(), Jolt.EActivation.Activate);
+
+			// Step the world (positions are plain [x,y,z] arrays — out-param, no handles)
+			log('Before the step the body is at ' + bodyInterface.GetPosition([0, 0, 0], body.GetID()).join(', '));
+			jolt.Step(1.0 / 60.0, 1);
+			log('After 1 step the body is now at ' + bodyInterface.GetPosition([0, 0, 0], body.GetID()).join(', '));
+
+			// Remove + destroy the body (frees the C++ Body and releases its shape reference)
+			bodyInterface.RemoveBody(body.GetID());
+			bodyInterface.DestroyBody(body.GetID());
+
+			// Release every handle we created. Each is a reference; deleting them drops those
+			// references and the refcounted C++ objects are freed once nothing holds them.
+			// 'material' MUST be deleted too — its handle is an independent reference, so leaving
+			// it undeleted pins the PhysicsMaterial alive (the 48-byte leak this demo used to show).
+			shapeResult.delete();
+			shape.delete();
+			compound.delete();
+			boxResult.delete();
+			boxShape.delete();
+			box.delete();
+			material.delete();
+			jolt.delete();                                          // tears down the physics system + owned interfaces
+
+			// A correct teardown reclaims everything: this should report 0 bytes.
+			log('Memory leaked: ' + (memoryFreeBefore - Jolt.JoltInterface.sGetFreeMemory()) + ' bytes');
+		</script>
+	</body>
+</html>
