@@ -78,7 +78,7 @@ set(JOLT_REPLACE_IMPORT
 # ---------------------------------------------------------------------------
 # JoltPhysics C++ source (FetchContent override)
 # ---------------------------------------------------------------------------
-# Default: pull Nilo's JoltPhysics C++ fork via Git (paired tag `nilo-vX.Y.Z`).
+# Default: pull Nilo's JoltPhysics C++ fork via Git (branch `nilo-X.Y.Z`).
 # Override:
 #   -DJOLT_PHYSICS_PATH=C:/dev/JoltPhysics                                # local checkout, skip fetch
 #   -DJOLT_PHYSICS_GIT_REPO=https://github.com/<org>/JoltPhysics  -DJOLT_PHYSICS_GIT_TAG=...   # different remote/tag
@@ -86,8 +86,8 @@ set(JOLT_PHYSICS_PATH "" CACHE PATH
     "Nilo: local JoltPhysics C++ repo root; when set, skips Git fetch.")
 set(JOLT_PHYSICS_GIT_REPO "https://github.com/nilo-technologies/JoltPhysics" CACHE STRING
     "Nilo: FetchContent JoltPhysics C++ Git URL (set to your fork).")
-set(JOLT_PHYSICS_GIT_TAG "nilo-v5.6.0" CACHE STRING
-    "Nilo: FetchContent tag on JOLT_PHYSICS_GIT_REPO (paired with this repo's nilo-* tag).")
+set(JOLT_PHYSICS_GIT_TAG "nilo-5.6.0" CACHE STRING
+    "Nilo: FetchContent tag or branch on JOLT_PHYSICS_GIT_REPO.")
 
 macro(nilo_declare_jolt_physics_fetchcontent)
     include(FetchContent)

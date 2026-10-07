@@ -13,11 +13,11 @@ Clone these as **siblings** under one parent (e.g. `C:\dev`); build scripts auto
 | Folder | Repo | Notes |
 |---|---|---|
 | `JoltPhysics.js/` (this repo) | `nilo-technologies/JoltPhysics.js` | branch `nilo` |
-| `JoltPhysics/` | `nilo-technologies/JoltPhysics` | C++ Jolt fork; tag `nilo-v5.6.0` |
+| `JoltPhysics/` | `nilo-technologies/JoltPhysics` | C++ Jolt fork; branch `nilo-5.6.0` |
 | `emsdk/` | `emscripten-core/emsdk` | `emsdk install 6.0.9 && emsdk activate 6.0.9` — **must match `ci/install-emsdk.sh`**; `latest` will drift from CI |
 | `Nilo/` | _private_ | the consumer |
 
-Both Jolt repos use paired `nilo-vX.Y.Z` tags where `X.Y.Z` matches the upstream Jolt C++ API line. Build scripts default to `nilo-v5.6.0`; override with `$env:NILO_JOLT_TAG`.
+The C++ fork has a `nilo-X.Y.Z` branch per Jolt release: upstream `vX.Y.Z` plus the Nilo commits from the previous line (`git cherry-pick vPREV..origin/nilo`). CMake and CI default to `nilo-5.6.0`; override with `-DJOLT_PHYSICS_GIT_TAG` or the workflow's `jolt_ref`.
 
 ## Fast C++ iteration
 
@@ -71,7 +71,7 @@ CI-only; don't pack a tarball from a workstation.
    npm version prerelease --preid=nilo --no-git-tag-version  # 5.6.0-nilo.N -> 5.6.0-nilo.(N+1)
    npm version 5.7.0-nilo.0 --no-git-tag-version             # new Jolt C++ API pin
    ```
-2. Push paired `nilo-vX.Y.Z` tags to `nilo-technologies/JoltPhysics` first, then this repo.
+2. For a new Jolt version, push the `nilo-X.Y.Z` branch to `nilo-technologies/JoltPhysics` and update the defaults in `cmake/NiloFork.cmake` and the workflow.
 3. **Actions → Nilo Build and Publish → Run workflow.** Leave **dry run** on for a `jolt-physics-dist` build artifact only; turn it off to create a GitHub Release `v<version>` with both `nilo-technologies-jolt-physics-<version>.tgz` (npm-installable) and the `dist/` tarball (debug provenance) attached. The release step is idempotent — a no-op rebuild on the same version skips creating a duplicate release.
 
 ## Consume from Nilo
