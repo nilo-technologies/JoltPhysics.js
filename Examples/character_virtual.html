@@ -130,8 +130,8 @@
 				if (body2.GetID() == conveyorBeltObjectId)
 					return { linear: [linearVelocity[0] + 5, linearVelocity[1], linearVelocity[2]] };
 			},
-			OnContactValidate: (character, bodyID2, subShapeID2) => {
-				if (bodyID2 == lavaObjectId)
+			OnContactValidate: (character, contact) => {
+				if (contact.GetBodyB() == lavaObjectId)
 					isInLava = true; // Can't modify velocity or position at this point, marking that we want to teleport
 				return true;
 			},

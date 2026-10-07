@@ -85,7 +85,7 @@ private:
         EstimateCollisionResponse(b1, b2, m, result, s.mCombinedFriction, s.mCombinedRestitution,
                                   mSystem->GetPhysicsSettings().mMinVelocityForRestitution, mNumIterations);
         float total = 0.0f;
-        for (const CollisionEstimationResult::Impulse &i : result.mImpulses) total += i.mContactImpulse;
+        for (float impulse : result.mContactImpulse) total += impulse;
         return total;
     }
 

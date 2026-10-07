@@ -38,13 +38,13 @@
 
 .PARAMETER NiloJoltTag
     Git tag checked out in BOTH this repo (JoltPhysics.js) and the JoltPhysics (C++) clone before building.
-    Default nilo-v5.5.0; override with -NiloJoltTag or $env:NILO_JOLT_TAG.
+    Default nilo-v5.6.0; override with -NiloJoltTag or $env:NILO_JOLT_TAG.
 
 .PARAMETER SkipGitCheckout
     Do not run git fetch/checkout (e.g. non-git export).
 
 .NOTES
-    Mirrors build.sh for Windows (Ninja + cmd-safe codegen). Nilo uses paired tags (default nilo-v5.5.0).
+    Mirrors build.sh for Windows (Ninja + cmd-safe codegen). Nilo uses paired tags (default nilo-v5.6.0).
 #>
 [CmdletBinding()]
 param(
@@ -73,7 +73,7 @@ if ([string]::IsNullOrWhiteSpace($NiloJoltTag)) {
         $NiloJoltTag = $env:NILO_JOLT_TAG
     }
     else {
-        $NiloJoltTag = "nilo-v5.5.0"
+        $NiloJoltTag = "nilo-v5.6.0"
     }
 }
 
@@ -155,19 +155,6 @@ if (-not $gitExe) {
 else {
     Invoke-NiloPairedGitCheckout -GitExe $gitExe -RepoPath $coreResolved -Tag $NiloJoltTag
     Invoke-NiloPairedGitCheckout -GitExe $gitExe -RepoPath $here -Tag $NiloJoltTag
-}
-
-$characterVirtualHeader = Join-Path $coreResolved "Jolt\Physics\Character\CharacterVirtual.h"
-if (Test-Path -LiteralPath $characterVirtualHeader) {
-    $cv = Get-Content -Raw -LiteralPath $characterVirtualHeader
-    if ($cv -match "OnContactAdded\(const CharacterVirtual \*inCharacter, const CharacterContact &inContact" -and
-        $cv -notmatch "CharacterVirtual::Contact") {
-        Write-Error @"
-Jolt core at $coreResolved uses the newer CharacterContact listener API. JoltPhysics.js still targets the v5.5.0-era API.
-
-Fix: git fetch --tags && git checkout nilo-v5.5.0 (or v5.5.0) in your Jolt clone, then re-run.
-"@
-    }
 }
 
 if ([string]::IsNullOrWhiteSpace($EmsdkRoot)) {

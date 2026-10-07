@@ -29,7 +29,7 @@ let outMeta, ctorMeta, retMeta, layoutMeta;
 try {
   const jolt = await (await import(pathToFileURL(probePath).href)).default();
   outMeta = jolt._outMeta();     // [{cls, method, names:[…], sizes:[…], outTs:[…], passKinds:[…], passTs:[…]}]
-  ctorMeta = jolt._ctorMeta();   // {ClassName: [{n, t?}, …]}
+  ctorMeta = jolt._ctorMeta();   // {ClassName: [[{n, t?}, …], …]}, one list per named constructor
   retMeta = jolt._retMeta();     // [{cls, method, tsType}]
   layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody, nilo*}
 } catch (e) {
@@ -107,7 +107,9 @@ function applyCtorParams(src) {
   const spec = ctorMeta;
   const unmapped = new Set();
   src = src.replace(/^(\s*)new\(([^)]*)\): (\w+);/gm, (line, indent, params, cls) => {
-    const ps = spec[cls];
+    if (!params) return line;
+    const arity = params.split(', ').length;
+    const ps = spec[cls]?.find((list) => list.length === arity);
     if (!ps) { if (params.includes('_')) unmapped.add(cls); return line; }
     const renamed = params.split(', ').map((p, i) => {
       const s = ps[i];
@@ -233,18 +235,19 @@ export type CharacterVelocityOverride = { velocity?: Vec3 };
 /** Return from OnAdjustBodyVelocity to override the contacting body's velocity; omit a field to keep it. */
 export type AdjustedBodyVelocity = { linear?: Vec3; angular?: Vec3 };
 /** Shape of the object passed to \`CharacterContactListener.implement(...)\`. Every callback is optional.
- * bodyID2 / subShapeID2 / otherCharacterID are numeric ids; ioSettings is mutated in place (a real
+ * \`contact\` is valid only during the callback and its contact normal points towards the character;
+ * ids are numeric; ioSettings is mutated in place (a real
  * handle), whereas velocity overrides are returned (see CharacterVelocityOverride / AdjustedBodyVelocity). */
 export interface CharacterContactListenerCallbacks {
-  OnContactValidate?(character: CharacterVirtual, bodyID2: number, subShapeID2: number): boolean;
-  OnContactAdded?(character: CharacterVirtual, bodyID2: number, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, ioSettings: CharacterContactSettings): void;
-  OnContactPersisted?(character: CharacterVirtual, bodyID2: number, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, ioSettings: CharacterContactSettings): void;
+  OnContactValidate?(character: CharacterVirtual, contact: CharacterContact): boolean;
+  OnContactAdded?(character: CharacterVirtual, contact: CharacterContact, ioSettings: CharacterContactSettings): void;
+  OnContactPersisted?(character: CharacterVirtual, contact: CharacterContact, ioSettings: CharacterContactSettings): void;
   OnContactRemoved?(character: CharacterVirtual, bodyID2: number, subShapeID2: number): void;
   OnAdjustBodyVelocity?(character: CharacterVirtual, body2: Body, linearVelocity: Vec3, angularVelocity: Vec3): AdjustedBodyVelocity | void;
   OnContactSolve?(character: CharacterVirtual, bodyID2: number, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, contactVelocity: Vec3, characterVelocity: Vec3, newCharacterVelocity: Vec3): CharacterVelocityOverride | void;
-  OnCharacterContactValidate?(character: CharacterVirtual, otherCharacter: CharacterVirtual, subShapeID2: number): boolean;
-  OnCharacterContactAdded?(character: CharacterVirtual, otherCharacter: CharacterVirtual, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, ioSettings: CharacterContactSettings): void;
-  OnCharacterContactPersisted?(character: CharacterVirtual, otherCharacter: CharacterVirtual, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, ioSettings: CharacterContactSettings): void;
+  OnCharacterContactValidate?(character: CharacterVirtual, contact: CharacterContact): boolean;
+  OnCharacterContactAdded?(character: CharacterVirtual, contact: CharacterContact, ioSettings: CharacterContactSettings): void;
+  OnCharacterContactPersisted?(character: CharacterVirtual, contact: CharacterContact, ioSettings: CharacterContactSettings): void;
   OnCharacterContactRemoved?(character: CharacterVirtual, otherCharacterID: number, subShapeID2: number): void;
   OnCharacterContactSolve?(character: CharacterVirtual, otherCharacter: CharacterVirtual, subShapeID2: number, contactPosition: Vec3, contactNormal: Vec3, contactVelocity: Vec3, characterVelocity: Vec3, newCharacterVelocity: Vec3): CharacterVelocityOverride | void;
 }
