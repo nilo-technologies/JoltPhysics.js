@@ -31,7 +31,7 @@ try {
   outMeta = jolt._outMeta();     // [{cls, method, names:[…], sizes:[…], outTs:[…], passKinds:[…], passTs:[…]}]
   ctorMeta = jolt._ctorMeta();   // {ClassName: [{n, t?}, …]}
   retMeta = jolt._retMeta();     // [{cls, method, tsType}]
-  layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody}
+  layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody, nilo*}
 } catch (e) {
   fail(`failed to load probe binary "${probePath}": ${e?.message ?? e}`);
 }
@@ -185,7 +185,26 @@ export type ActiveBodyState = {
 export interface ActiveBodyBufferHandle {
   readonly bodyCount: number;
 }
+/** \`point\` averages body1's world contact points; \`impulse\` is the estimated normal impulse (0 for triggers). */
+export type NiloContactAdded = {
+  body1: number; body2: number; objectLayer1: number; objectLayer2: number; isTrigger: boolean;
+  point: Vec3; normal: Vec3; impulse: number;
+};
+export type NiloContactRemoved = { body1: number; body2: number };
+export interface NiloContactsBufferHandle {
+  readonly addedCount: number;
+  readonly removedCount: number;
+}
 export interface JoltFacade {
+  /** \`numIterations\` feeds the impulse estimate (default 4). */
+  createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
+  clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // between steps, once read
+  updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step, before reading
+  getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
+  getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
+  destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;
+  createNiloContactAdded(): NiloContactAdded;
+  createNiloContactRemoved(): NiloContactRemoved;
   createContactBuffer(physicsSystem: PhysicsSystem): ContactBuffer;
   clearContactBuffer(buffer: ContactBuffer): void;    // before Step
   updateContactBuffer(buffer: ContactBuffer): void;   // after Step
