@@ -540,22 +540,18 @@ struct CharacterContactListenerWrapper : public wrapper<CharacterContactListener
     }
     // Character-vs-character variants: the second party is another CharacterVirtual (non-owning
     // handle). SubShapeID / CharacterID marshal as uint32.
-    bool OnCharacterContactValidate(const CharacterVirtual *c, const CharacterVirtual *other,
-                                    const SubShapeID &s2) override {
+    // The CharacterContact handle is valid only for the duration of the callback.
+    bool OnCharacterContactValidate(const CharacterVirtual *c, const CharacterContact &k) override {
         if (!mHasCharValidate) return true;
-        return call<bool>("OnCharacterContactValidate", handleOf(*c), handleOf(*other), (uint32)s2.GetValue());
+        return call<bool>("OnCharacterContactValidate", handleOf(*c), handleOf(k));
     }
-    void OnCharacterContactAdded(const CharacterVirtual *c, const CharacterVirtual *other,
-                                 const SubShapeID &s2, RVec3Arg pos, Vec3Arg normal,
+    void OnCharacterContactAdded(const CharacterVirtual *c, const CharacterContact &k,
                                  CharacterContactSettings &io) override {
-        if (mHasCharAdded) call<void>("OnCharacterContactAdded", handleOf(*c), handleOf(*other),
-            (uint32)s2.GetValue(), Vec3(pos), normal, handleOf(io));
+        if (mHasCharAdded) call<void>("OnCharacterContactAdded", handleOf(*c), handleOf(k), handleOf(io));
     }
-    void OnCharacterContactPersisted(const CharacterVirtual *c, const CharacterVirtual *other,
-                                     const SubShapeID &s2, RVec3Arg pos, Vec3Arg normal,
+    void OnCharacterContactPersisted(const CharacterVirtual *c, const CharacterContact &k,
                                      CharacterContactSettings &io) override {
-        if (mHasCharPersisted) call<void>("OnCharacterContactPersisted", handleOf(*c), handleOf(*other),
-            (uint32)s2.GetValue(), Vec3(pos), normal, handleOf(io));
+        if (mHasCharPersisted) call<void>("OnCharacterContactPersisted", handleOf(*c), handleOf(k), handleOf(io));
     }
     // The "removed" variant takes the OTHER character's CharacterID by value (it may already be
     // deleted). Marshal as uint32.
@@ -606,20 +602,15 @@ struct CharacterContactListenerWrapper : public wrapper<CharacterContactListener
                 ioNewCharVel = Vec3(v[0].as<float>(), v[1].as<float>(), v[2].as<float>());
         }
     }
-    bool OnContactValidate(const CharacterVirtual *c, const BodyID &b2, const SubShapeID &s2) override {
+    bool OnContactValidate(const CharacterVirtual *c, const CharacterContact &k) override {
         if (!mHasValidate) return true;
-        return call<bool>("OnContactValidate", handleOf(*c),
-            (uint32)b2.GetIndexAndSequenceNumber(), (uint32)s2.GetValue());
+        return call<bool>("OnContactValidate", handleOf(*c), handleOf(k));
     }
-    void OnContactAdded(const CharacterVirtual *c, const BodyID &b2, const SubShapeID &s2,
-                        RVec3Arg pos, Vec3Arg normal, CharacterContactSettings &io) override {
-        if (mHasAdded) call<void>("OnContactAdded", handleOf(*c),
-            (uint32)b2.GetIndexAndSequenceNumber(), (uint32)s2.GetValue(), Vec3(pos), normal, handleOf(io));
+    void OnContactAdded(const CharacterVirtual *c, const CharacterContact &k, CharacterContactSettings &io) override {
+        if (mHasAdded) call<void>("OnContactAdded", handleOf(*c), handleOf(k), handleOf(io));
     }
-    void OnContactPersisted(const CharacterVirtual *c, const BodyID &b2, const SubShapeID &s2,
-                            RVec3Arg pos, Vec3Arg normal, CharacterContactSettings &io) override {
-        if (mHasPersisted) call<void>("OnContactPersisted", handleOf(*c),
-            (uint32)b2.GetIndexAndSequenceNumber(), (uint32)s2.GetValue(), Vec3(pos), normal, handleOf(io));
+    void OnContactPersisted(const CharacterVirtual *c, const CharacterContact &k, CharacterContactSettings &io) override {
+        if (mHasPersisted) call<void>("OnContactPersisted", handleOf(*c), handleOf(k), handleOf(io));
     }
     void OnContactRemoved(const CharacterVirtual *c, const BodyID &b2, const SubShapeID &s2) override {
         if (mHasRemoved) call<void>("OnContactRemoved", handleOf(*c),
@@ -1270,7 +1261,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .value("WorldSpace", EConstraintSpace::WorldSpace);
     enum_<ESpringMode>("ESpringMode")
         .value("FrequencyAndDamping", ESpringMode::FrequencyAndDamping)
-        .value("StiffnessAndDamping", ESpringMode::StiffnessAndDamping);
+        .value("StiffnessAndDamping", ESpringMode::StiffnessAndDamping)
+        .value("MassNormalizedStiffnessAndDamping", ESpringMode::MassNormalizedStiffnessAndDamping);
     enum_<EOverrideMassProperties>("EOverrideMassProperties")
         .value("CalculateMassAndInertia", EOverrideMassProperties::CalculateMassAndInertia)
         .value("CalculateInertia", EOverrideMassProperties::CalculateInertia)
@@ -1340,7 +1332,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
     enum_<EMotorState>("EMotorState")
         .value("Off", EMotorState::Off)
         .value("Velocity", EMotorState::Velocity)
-        .value("Position", EMotorState::Position);
+        .value("Position", EMotorState::Position)
+        .value("PositionAndVelocity", EMotorState::PositionAndVelocity);
     enum_<ETransmissionMode>("ETransmissionMode")
         .value("Auto", ETransmissionMode::Auto)
         .value("Manual", ETransmissionMode::Manual);
@@ -2433,6 +2426,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetTransformedShape", +[](const Body &b) { return b.GetTransformedShape(); })
         .function("GetBodyCreationSettings", +[](const Body &b) { return b.GetBodyCreationSettings(); })
         .function("GetSoftBodyCreationSettings", +[](const Body &b) { return b.GetSoftBodyCreationSettings(); })
+        .function("ApplyBodyCreationSettings(bodyCreationSettings, bplInterface)", &Body::ApplyBodyCreationSettings)
+        .function("ApplySoftBodyCreationSettings(softBodyCreationSettings, bplInterface)", &Body::ApplySoftBodyCreationSettings)
         .function("SaveState(stream)", +[](const Body &b, StateRecorder &s) { b.SaveState(s); }, allow_raw_pointers())
         .function("RestoreState(stream)", +[](Body &b, StateRecorder &s) { b.RestoreState(s); }, allow_raw_pointers());
 
@@ -2679,6 +2674,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mNumVelocitySteps", &PhysicsSettings::mNumVelocitySteps)
         .property("mNumPositionSteps", &PhysicsSettings::mNumPositionSteps)
         .property("mMinVelocityForRestitution", &PhysicsSettings::mMinVelocityForRestitution)
+        .property("mInternalEdgeRemovalVertexToleranceSq", &PhysicsSettings::mInternalEdgeRemovalVertexToleranceSq)
         .property("mTimeBeforeSleep", &PhysicsSettings::mTimeBeforeSleep)
         .property("mPointVelocitySleepThreshold", &PhysicsSettings::mPointVelocitySleepThreshold)
         .property("mDeterministicSimulation", &PhysicsSettings::mDeterministicSimulation)
@@ -2921,6 +2917,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
     jolt_class_<CollideShapeSettings>("CollideShapeSettings")
         .constructor<>()
         .property("mMaxSeparationDistance", &CollideShapeSettings::mMaxSeparationDistance)
+        .property("mInternalEdgeRemovalVertexToleranceSq", &CollideShapeSettings::mInternalEdgeRemovalVertexToleranceSq)
         .property("mBackFaceMode", &CollideShapeSettings::mBackFaceMode)
         // inherited from CollideSettingsBase -> getter/setter (member-ptr to base fails)
         .property("mActiveEdgeMode",
@@ -2945,6 +2942,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mBackFaceModeConvex", &ShapeCastSettings::mBackFaceModeConvex)
         .property("mReturnDeepestPoint", &ShapeCastSettings::mReturnDeepestPoint)
         .property("mUseShrunkenShapeAndConvexRadius", &ShapeCastSettings::mUseShrunkenShapeAndConvexRadius)
+        .property("mExtraConvexRadius", &ShapeCastSettings::mExtraConvexRadius)
         .property("mActiveEdgeMode",
             +[](const ShapeCastSettings &s) { return s.mActiveEdgeMode; },
             +[](ShapeCastSettings &s, EActiveEdgeMode v) { s.mActiveEdgeMode = v; })
@@ -3551,6 +3549,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         // The collision-filter interfaces this JoltInterface owns — pass to DefaultObjectLayerFilter /
         // DefaultBroadPhaseLayerFilter to build the standard layer filters for a query.
         .function("GetObjectLayerPairFilter", &JoltInterface::GetObjectLayerPairFilter, allow_raw_pointers())
+        .function("GetBroadPhaseLayerInterface", &JoltInterface::GetBroadPhaseLayerInterface, allow_raw_pointers())
         .function("GetObjectVsBroadPhaseLayerFilter", &JoltInterface::GetObjectVsBroadPhaseLayerFilter, allow_raw_pointers());
 
     // ==== characters =========================================================
@@ -3586,32 +3585,32 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("Add(character)", &CharacterVsCharacterCollisionSimple::Add, allow_raw_pointers())
         .function("Remove(character)", &CharacterVsCharacterCollisionSimple::Remove, allow_raw_pointers());
 
-    // A single contact from CharacterVirtual::GetActiveContacts(). Read-only snapshot; the
-    // handle is valid only until the next character Update. (Jolt: CharacterVirtual::Contact.)
-    jolt_class_<CharacterVirtual::Contact>("CharacterVirtualContact")
-        .function("IsSameBody(other)", +[](const CharacterVirtual::Contact &a, const CharacterVirtual::Contact &b) { return a.IsSameBody(b); })
-        .out_function("GetPosition(out)",       out_desc::Vec3, +[](const CharacterVirtual::Contact &c, uintptr_t out) { WriteVec3(c.mPosition, out); })
-        .out_function("GetLinearVelocity(out)", out_desc::Vec3, +[](const CharacterVirtual::Contact &c, uintptr_t out) { WriteVec3(c.mLinearVelocity, out); })
-        .out_function("GetContactNormal(out)",  out_desc::Vec3, +[](const CharacterVirtual::Contact &c, uintptr_t out) { WriteVec3(c.mContactNormal, out); })
-        .out_function("GetSurfaceNormal(out)",  out_desc::Vec3, +[](const CharacterVirtual::Contact &c, uintptr_t out) { WriteVec3(c.mSurfaceNormal, out); })
-        .property("mDistance", &CharacterVirtual::Contact::mDistance)
-        .property("mFraction", &CharacterVirtual::Contact::mFraction)
-        .function("GetBodyB",        +[](const CharacterVirtual::Contact &c) { return fromBodyID(c.mBodyB); })
-        .function("GetCharacterIDB", +[](const CharacterVirtual::Contact &c) { return (uint32)c.mCharacterIDB.GetValue(); })
-        .function("GetSubShapeIDB",  +[](const CharacterVirtual::Contact &c) { return (uint32)c.mSubShapeIDB.GetValue(); })
-        .property("mMotionTypeB", &CharacterVirtual::Contact::mMotionTypeB)
-        .property("mIsSensorB",   &CharacterVirtual::Contact::mIsSensorB)
+    // A character contact, from CharacterVirtual::GetActiveContacts() or a CharacterContactListener
+    // callback. Read-only; valid until the next character Update, or the end of the callback.
+    jolt_class_<CharacterContact>("CharacterContact")
+        .function("IsSameBody(other)", +[](const CharacterContact &a, const CharacterContact &b) { return a.IsSameBody(b); })
+        .out_function("GetPosition(out)",       out_desc::Vec3, +[](const CharacterContact &c, uintptr_t out) { WriteVec3(c.mPosition, out); })
+        .out_function("GetLinearVelocity(out)", out_desc::Vec3, +[](const CharacterContact &c, uintptr_t out) { WriteVec3(c.mLinearVelocity, out); })
+        .out_function("GetContactNormal(out)",  out_desc::Vec3, +[](const CharacterContact &c, uintptr_t out) { WriteVec3(c.mContactNormal, out); })
+        .out_function("GetSurfaceNormal(out)",  out_desc::Vec3, +[](const CharacterContact &c, uintptr_t out) { WriteVec3(c.mSurfaceNormal, out); })
+        .property("mDistance", &CharacterContact::mDistance)
+        .property("mFraction", &CharacterContact::mFraction)
+        .function("GetBodyB",        +[](const CharacterContact &c) { return fromBodyID(c.mBodyB); })
+        .function("GetCharacterIDB", +[](const CharacterContact &c) { return (uint32)c.mCharacterIDB.GetValue(); })
+        .function("GetSubShapeIDB",  +[](const CharacterContact &c) { return (uint32)c.mSubShapeIDB.GetValue(); })
+        .property("mMotionTypeB", &CharacterContact::mMotionTypeB)
+        .property("mIsSensorB",   &CharacterContact::mIsSensorB)
         // mCharacterB may dangle when read via GetActiveContacts() — prefer GetCharacterIDB.
-        .function("GetCharacterB", +[](const CharacterVirtual::Contact &c) { return const_cast<CharacterVirtual *>(c.mCharacterB); }, allow_raw_pointers())
-        .function("GetUserData", +[](const CharacterVirtual::Contact &c) { return (uint64)c.mUserData; })
-        .function("GetMaterial", +[](const CharacterVirtual::Contact &c) { return const_cast<PhysicsMaterial *>(c.mMaterial); }, allow_raw_pointers())
-        .property("mHadCollision",     &CharacterVirtual::Contact::mHadCollision)
-        .property("mWasDiscarded",     &CharacterVirtual::Contact::mWasDiscarded)
-        .property("mCanPushCharacter", &CharacterVirtual::Contact::mCanPushCharacter);
+        .function("GetCharacterB", +[](const CharacterContact &c) { return const_cast<CharacterVirtual *>(c.mCharacterB); }, allow_raw_pointers())
+        .function("GetUserData", +[](const CharacterContact &c) { return (uint64)c.mUserData; })
+        .function("GetMaterial", +[](const CharacterContact &c) { return const_cast<PhysicsMaterial *>(c.mMaterial); }, allow_raw_pointers())
+        .property("mHadCollision",     &CharacterContact::mHadCollision)
+        .property("mWasDiscarded",     &CharacterContact::mWasDiscarded)
+        .property("mCanPushCharacter", &CharacterContact::mCanPushCharacter);
 
     // Read-only view over CharacterVirtual::ContactList. at() returns a non-owning handle so the
     // large Contact struct isn't copied.
-    class_<CharacterVirtual::ContactList>("ArrayCharacterVirtualContact")
+    class_<CharacterVirtual::ContactList>("ArrayCharacterContact")
         .constructor<>()
         .function("empty", +[](const CharacterVirtual::ContactList &a) { return a.empty(); })
         .function("size",  +[](const CharacterVirtual::ContactList &a) { return (uint32)a.size(); })
@@ -3660,6 +3659,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("SetUp(up)", &CharacterBase::SetUp)
         .out_function("GetUp(out)", out_desc::Vec3, +[](const CharacterBase &s, uintptr_t out) { WriteVec3(s.GetUp(), out); })
         .function("IsSlopeTooSteep(normal)", &CharacterBase::IsSlopeTooSteep)
+        .function("SetSupportingVolume(plane)", &CharacterBase::SetSupportingVolume)
+        .function("GetSupportingVolume", +[](const CharacterBase &c) { return c.GetSupportingVolume(); })
         .function("GetShape", +[](const CharacterBase &c) { return const_cast<Shape *>(c.GetShape()); }, allow_raw_pointers())
         .function("GetGroundState", &CharacterBase::GetGroundState)
         .function("IsSupported", &CharacterBase::IsSupported)
@@ -3915,7 +3916,9 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetConstraint(index)", +[](Ragdoll &r, int i) { return r.GetConstraint(i); }, allow_raw_pointers())
         .function("SetPose(pose)", +[](Ragdoll &r, const SkeletonPose &p) { r.SetPose(p); })
         .function("GetPose(pose)", +[](Ragdoll &r, SkeletonPose &p) { r.GetPose(p); })
-        .function("DriveToPoseUsingMotors(pose)", &Ragdoll::DriveToPoseUsingMotors)
+        .function("DriveToPoseUsingMotors(pose)", +[](Ragdoll &r, const SkeletonPose &p) { r.DriveToPoseUsingMotors(p); })
+        .function("DriveToPoseUsingMotors(prevPose, pose, deltaTime)",
+            +[](Ragdoll &r, const SkeletonPose &prev, const SkeletonPose &p, float dt) { r.DriveToPoseUsingMotors(prev, p, dt); })
         .function("DriveToPoseUsingKinematics(pose, deltaTime)", +[](Ragdoll &r, const SkeletonPose &p, float dt) { r.DriveToPoseUsingKinematics(p, dt); })
         .function("ResetWarmStart", &Ragdoll::ResetWarmStart)
         .function("SetLinearAndAngularVelocity(linearVelocity, angularVelocity)", +[](Ragdoll &r, Vec3 lv, Vec3 av) { r.SetLinearAndAngularVelocity(lv, av); })

@@ -13,11 +13,11 @@ Clone these as **siblings** under one parent (e.g. `C:\dev`); build scripts auto
 | Folder | Repo | Notes |
 |---|---|---|
 | `JoltPhysics.js/` (this repo) | `nilo-technologies/JoltPhysics.js` | branch `nilo` |
-| `JoltPhysics/` | `nilo-technologies/JoltPhysics` | C++ Jolt fork; tag `nilo-v5.5.0` |
+| `JoltPhysics/` | `nilo-technologies/JoltPhysics` | C++ Jolt fork; tag `nilo-v5.6.0` |
 | `emsdk/` | `emscripten-core/emsdk` | `emsdk install 6.0.9 && emsdk activate 6.0.9` — **must match `ci/install-emsdk.sh`**; `latest` will drift from CI |
 | `Nilo/` | _private_ | the consumer |
 
-Both Jolt repos use paired `nilo-vX.Y.Z` tags where `X.Y.Z` matches the upstream Jolt C++ API line. Build scripts default to `nilo-v5.5.0`; override with `$env:NILO_JOLT_TAG`.
+Both Jolt repos use paired `nilo-vX.Y.Z` tags where `X.Y.Z` matches the upstream Jolt C++ API line. Build scripts default to `nilo-v5.6.0`; override with `$env:NILO_JOLT_TAG`.
 
 ## Fast C++ iteration
 

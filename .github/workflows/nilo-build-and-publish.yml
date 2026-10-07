@@ -26,9 +26,9 @@ on:
         default: ""
         type: string
       jolt_ref:
-        description: "Jolt C++ ref: tag or branch name that exists on GitHub (e.g. nilo-v5.5.0 or master). Push paired tags first: git push origin nilo-v5.5.0"
+        description: "Jolt C++ ref: tag or branch name that exists on GitHub (e.g. nilo-v5.6.0 or master). Push paired tags first: git push origin nilo-v5.6.0"
         required: false
-        default: "nilo-v5.5.0"
+        default: "nilo-v5.6.0"
         type: string
       dry_run:
         description: "If true, build only (skip gh-pages and GitHub Release)."
@@ -46,7 +46,7 @@ jobs:
     env:
       # Paired tag with JoltPhysics.js; keep in sync with CMake default JOLT_PHYSICS_GIT_TAG.
       # workflow_dispatch can override via the jolt_ref input.
-      JOLT_PHYSICS_CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.jolt_ref || 'nilo-v5.5.0') || 'nilo-v5.5.0' }}
+      JOLT_PHYSICS_CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.jolt_ref || 'nilo-v5.6.0') || 'nilo-v5.6.0' }}
 
     steps:
     # Default workflow_dispatch behavior of `actions/checkout` is "build the dispatched

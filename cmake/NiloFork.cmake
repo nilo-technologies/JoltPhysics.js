@@ -86,7 +86,7 @@ set(JOLT_PHYSICS_PATH "" CACHE PATH
     "Nilo: local JoltPhysics C++ repo root; when set, skips Git fetch.")
 set(JOLT_PHYSICS_GIT_REPO "https://github.com/nilo-technologies/JoltPhysics" CACHE STRING
     "Nilo: FetchContent JoltPhysics C++ Git URL (set to your fork).")
-set(JOLT_PHYSICS_GIT_TAG "nilo-v5.5.0" CACHE STRING
+set(JOLT_PHYSICS_GIT_TAG "nilo-v5.6.0" CACHE STRING
     "Nilo: FetchContent tag on JOLT_PHYSICS_GIT_REPO (paired with this repo's nilo-* tag).")
 
 macro(nilo_declare_jolt_physics_fetchcontent)
