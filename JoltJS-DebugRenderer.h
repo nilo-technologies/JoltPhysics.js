@@ -45,7 +45,7 @@ public:
 	static constexpr uint mSize = sizeof(DebugRendererTriangle);
 };
 
-class DebugRendererEm : public JPH::DebugRenderer
+class DebugRendererCallbacks : public JPH::DebugRenderer
 {
 public:
 	void 			Initialize()

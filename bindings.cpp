@@ -695,11 +695,11 @@ struct PhysicsStepListenerWrapper : public wrapper<PhysicsStepListener> {
     }
 };
 
-// JS-subclassable vehicle friction/step callbacks. Subclasses VehicleConstraintCallbacksEm
+// JS-subclassable vehicle friction/step callbacks. Subclasses VehicleConstraintCallbacks
 // (JoltJS.h): SetVehicleConstraint() wires the four Jolt std::function slots to these virtuals.
 // GetCombinedFriction is invoked twice per wheel (longitudinal then lateral) — a JS function
 // can't mutate the two float& refs in one call, so it returns the new value. SubShapeID -> uint32.
-struct VehicleConstraintCallbacksWrapper : public wrapper<VehicleConstraintCallbacksEm> {
+struct VehicleConstraintCallbacksWrapper : public wrapper<VehicleConstraintCallbacks> {
     EMSCRIPTEN_WRAPPER(VehicleConstraintCallbacksWrapper);
     float GetCombinedFriction(unsigned int inWheelIndex, ETireFrictionDirection inDir, float inTireFriction, const Body &inBody2, const SubShapeID &inSub2) override {
         return call<float>("GetCombinedFriction", inWheelIndex, inDir, inTireFriction, handleOf(inBody2), (uint32)inSub2.GetValue());
@@ -710,9 +710,9 @@ struct VehicleConstraintCallbacksWrapper : public wrapper<VehicleConstraintCallb
 };
 
 // JS-subclassable wheeled-controller tire-max-impulse callback. Subclasses
-// WheeledVehicleControllerCallbacksEm (JoltJS.h): outResult is pre-filled with the default
+// WheeledVehicleControllerCallbacks (JoltJS.h): outResult is pre-filled with the default
 // (friction * suspensionImpulse) then handed to JS as a mutable handle to overwrite.
-struct WheeledVehicleControllerCallbacksWrapper : public wrapper<WheeledVehicleControllerCallbacksEm> {
+struct WheeledVehicleControllerCallbacksWrapper : public wrapper<WheeledVehicleControllerCallbacks> {
     EMSCRIPTEN_WRAPPER(WheeledVehicleControllerCallbacksWrapper);
     void OnTireMaxImpulseCallback(uint inWheelIndex, TireMaxImpulseCallbackResult *outResult, float inSuspensionImpulse, float inLongitudinalFriction, float inLateralFriction, float inLongitudinalSlip, float inLateralSlip, float inDeltaTime) override {
         call<void>("OnTireMaxImpulseCallback", inWheelIndex, handleOf(*outResult), inSuspensionImpulse, inLongitudinalFriction, inLateralFriction, inLongitudinalSlip, inLateralSlip, inDeltaTime);
@@ -1024,11 +1024,11 @@ struct GroupFilterWrapper : public wrapper<GroupFilter> {
 };
 
 #ifdef JPH_DEBUG_RENDERER
-// JS-subclassable debug renderer. Receives draw primitives from Jolt's DebugRendererEm.
+// JS-subclassable debug renderer. Receives draw primitives through DebugRendererCallbacks (JoltJS-DebugRenderer.h).
 // RVec3*/Color* args are dereferenced to value types (Vec3 value_array / Color value_array)
 // so JS sees them as plain arrays. Geometry buffer pointers are passed as uintptr_t so JS
 // can read raw triangle/vertex data via HEAP with DebugRendererVertexTraits offsets.
-struct DebugRendererWrapper : public wrapper<DebugRendererEm> {
+struct DebugRendererWrapper : public wrapper<DebugRendererCallbacks> {
     EMSCRIPTEN_WRAPPER(DebugRendererWrapper);
     void DrawLine(const RVec3 *inFrom, const RVec3 *inTo, const Color *inColor) override {
         call<void>("DrawLine", Vec3(*inFrom), Vec3(*inTo), *inColor);
@@ -3952,11 +3952,11 @@ EMSCRIPTEN_BINDINGS(jolt) {
     jolt_class_<TireMaxImpulseCallbackResult>("TireMaxImpulseCallbackResult")
         .property("mLongitudinalImpulse", &TireMaxImpulseCallbackResult::mLongitudinalImpulse)
         .property("mLateralImpulse",      &TireMaxImpulseCallbackResult::mLateralImpulse);
-    jolt_class_<VehicleConstraintCallbacksEm>("VehicleConstraintCallbacksEm")
-        .function("SetVehicleConstraint(constraint)", &VehicleConstraintCallbacksEm::SetVehicleConstraint)
+    jolt_class_<VehicleConstraintCallbacks>("VehicleConstraintCallbacks")
+        .function("SetVehicleConstraint(constraint)", &VehicleConstraintCallbacks::SetVehicleConstraint)
         .allow_subclass<VehicleConstraintCallbacksWrapper>("VehicleConstraintCallbacksJS");
-    jolt_class_<WheeledVehicleControllerCallbacksEm>("WheeledVehicleControllerCallbacksEm")
-        .function("SetWheeledVehicleController(controller)", &WheeledVehicleControllerCallbacksEm::SetWheeledVehicleController)
+    jolt_class_<WheeledVehicleControllerCallbacks>("WheeledVehicleControllerCallbacks")
+        .function("SetWheeledVehicleController(controller)", &WheeledVehicleControllerCallbacks::SetWheeledVehicleController)
         .allow_subclass<WheeledVehicleControllerCallbacksWrapper>("WheeledVehicleControllerCallbacksJS");
 
     jolt_class_<VehicleEngineSettings>("VehicleEngineSettings")
@@ -4350,24 +4350,24 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .class_function("mVOffset", +[]() { return DebugRendererTriangleTraits::mVOffset; })
         .class_function("mSize",    +[]() { return DebugRendererTriangleTraits::mSize; });
 
-    jolt_class_<DebugRendererEm>("DebugRendererEm")
+    jolt_class_<DebugRendererCallbacks>("DebugRendererCallbacks")
         .allow_subclass<DebugRendererWrapper>("DebugRendererWrapper")
-        .function("Initialize", &DebugRendererEm::Initialize)
+        .function("Initialize", &DebugRendererCallbacks::Initialize)
         // DrawBodies / DrawConstraints: JS calls these to trigger drawing; they call back into the JS subclass
-        .function("DrawBodies(system, settings)", static_cast<void (DebugRendererEm::*)(PhysicsSystem*, BodyManagerDrawSettings*)>(&DebugRendererEm::DrawBodies), allow_raw_pointers())
-        .function("DrawBodies(system)",           static_cast<void (DebugRendererEm::*)(PhysicsSystem*)>(&DebugRendererEm::DrawBodies), allow_raw_pointers())
-        .function("DrawConstraints(system)",             &DebugRendererEm::DrawConstraints,             allow_raw_pointers())
-        .function("DrawConstraintLimits(system)",        &DebugRendererEm::DrawConstraintLimits,        allow_raw_pointers())
-        .function("DrawConstraintReferenceFrame(system)",&DebugRendererEm::DrawConstraintReferenceFrame, allow_raw_pointers())
+        .function("DrawBodies(system, settings)", static_cast<void (DebugRendererCallbacks::*)(PhysicsSystem*, BodyManagerDrawSettings*)>(&DebugRendererCallbacks::DrawBodies), allow_raw_pointers())
+        .function("DrawBodies(system)",           static_cast<void (DebugRendererCallbacks::*)(PhysicsSystem*)>(&DebugRendererCallbacks::DrawBodies), allow_raw_pointers())
+        .function("DrawConstraints(system)",             &DebugRendererCallbacks::DrawConstraints,             allow_raw_pointers())
+        .function("DrawConstraintLimits(system)",        &DebugRendererCallbacks::DrawConstraintLimits,        allow_raw_pointers())
+        .function("DrawConstraintReferenceFrame(system)",&DebugRendererCallbacks::DrawConstraintReferenceFrame, allow_raw_pointers())
         // DrawShape/DrawBody: Mat44/Vec3/Color are value_array so wrap to take by value
         .function("DrawShape(shape, modelMatrix, scale, color, wireframe)",
-            +[](DebugRendererEm &r, Shape *s, Mat44 m, Vec3 sc, Color c, bool wire) {
+            +[](DebugRendererCallbacks &r, Shape *s, Mat44 m, Vec3 sc, Color c, bool wire) {
                 r.DrawShape(s, &m, &sc, &c, wire);
             }, allow_raw_pointers())
         .function("DrawBody(body, color, wireframe)",
-            +[](DebugRendererEm &r, Body *b, Color c, bool wire) {
+            +[](DebugRendererCallbacks &r, Body *b, Color c, bool wire) {
                 r.DrawBody(b, &c, wire);
             }, allow_raw_pointers())
-        .function("DrawConstraint(constraint)", &DebugRendererEm::DrawConstraint, allow_raw_pointers());
+        .function("DrawConstraint(constraint)", &DebugRendererCallbacks::DrawConstraint, allow_raw_pointers());
 #endif
 }
