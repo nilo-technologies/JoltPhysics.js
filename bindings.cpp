@@ -538,9 +538,8 @@ struct CharacterContactListenerWrapper : public wrapper<CharacterContactListener
         mHasCharRemoved      = !v["OnCharacterContactRemoved"].isUndefined();
         mHasCharContactSolve = !v["OnCharacterContactSolve"].isUndefined();
     }
-    // Character-vs-character variants: the second party is another CharacterVirtual (non-owning
-    // handle). SubShapeID / CharacterID marshal as uint32.
-    // The CharacterContact handle is valid only for the duration of the callback.
+    // Character-vs-character variants. The CharacterContact handle is valid only for the duration
+    // of the callback; its contact normal points towards the character.
     bool OnCharacterContactValidate(const CharacterVirtual *c, const CharacterContact &k) override {
         if (!mHasCharValidate) return true;
         return call<bool>("OnCharacterContactValidate", handleOf(*c), handleOf(k));
@@ -1735,6 +1734,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mBitsPerSample", &HeightFieldShapeSettings::mBitsPerSample);
     // Magic sample value marking a hole (no collision) in a height field.
     constant("cNoCollisionValue", (float)HeightFieldShapeConstants::cNoCollisionValue);
+    constant("cMaxBitsPerSample", HeightFieldShapeConstants::cMaxBitsPerSample);
 
     // -- Plane shape --
     jolt_class_<PlaneShape, base<Shape>>("PlaneShape")
@@ -2580,6 +2580,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
 
     // ---- PhysicsSystem (reference accessors via lambdas) ----
     jolt_class_<PhysicsSystem>("PhysicsSystem")
+        .function("GetBroadPhaseLayerInterface",
+            +[](const PhysicsSystem &ps) { return const_cast<BroadPhaseLayerInterface *>(&ps.GetBroadPhaseLayerInterface()); }, allow_raw_pointers())
         .function("GetBodyInterface",
             +[](PhysicsSystem &ps) { return &ps.GetBodyInterface(); }, allow_raw_pointers())
         .function("GetBodyLockInterface",
@@ -3058,7 +3060,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .property("mFrequency", &SpringSettings::mFrequency)   // union with mStiffness
         .property("mStiffness", &SpringSettings::mStiffness)
         .property("mDamping", &SpringSettings::mDamping)
-        .function("HasStiffness", &SpringSettings::HasStiffness);
+        .function("HasStiffness", &SpringSettings::HasStiffness)
+        .function("HasStiffnessOrDamping", &SpringSettings::HasStiffnessOrDamping);
     jolt_class_<LinearCurve::Point>("LinearCurvePoint")
         .constructor<>()
         .property("mX", &LinearCurve::Point::mX)
@@ -3076,6 +3079,10 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetPoint(index)", +[](LinearCurve &c, uint32 i) { return &c.mPoints[i]; }, allow_raw_pointers());
     jolt_class_<MotorSettings>("MotorSettings")
         .constructor<>()
+        .constructor<float, float>("frequency, damping")
+        .constructor<ESpringMode, float, float>("mode, frequency, damping")
+        .constructor<float, float, float, float>("frequency, damping, forceLimit, torqueLimit")
+        .constructor<ESpringMode, float, float, float, float>("mode, frequency, damping, forceLimit, torqueLimit")
         .property("mMinForceLimit", &MotorSettings::mMinForceLimit)
         .property("mMaxForceLimit", &MotorSettings::mMaxForceLimit)
         .property("mMinTorqueLimit", &MotorSettings::mMinTorqueLimit)
@@ -3323,6 +3330,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("SetTargetAngularVelocityCS(angularVelocity)", &SwingTwistConstraint::SetTargetAngularVelocityCS)
         .out_function("GetTargetAngularVelocityCS(out)", out_desc::Vec3, +[](const SwingTwistConstraint &c, uintptr_t out) { WriteVec3(c.GetTargetAngularVelocityCS(), out); })
         .out_function("GetTargetOrientationCS(out)", out_desc::Quat, +[](const SwingTwistConstraint &c, uintptr_t out) { WriteQuat(c.GetTargetOrientationCS(), out); })
+        .function("SetTargetAngularVelocityBS(angularVelocity)", &SwingTwistConstraint::SetTargetAngularVelocityBS)
         .function("SetTargetOrientationBS(orientation)", &SwingTwistConstraint::SetTargetOrientationBS)
         .out_function("GetRotationInConstraintSpace(out)", out_desc::Quat, +[](const SwingTwistConstraint &c, uintptr_t out) { WriteQuat(c.GetRotationInConstraintSpace(), out); })
         .out_function("GetTotalLambdaPosition(out)", out_desc::Vec3, +[](const SwingTwistConstraint &c, uintptr_t out) { WriteVec3(c.GetTotalLambdaPosition(), out); })
@@ -3600,6 +3608,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         .function("GetSubShapeIDB",  +[](const CharacterContact &c) { return (uint32)c.mSubShapeIDB.GetValue(); })
         .property("mMotionTypeB", &CharacterContact::mMotionTypeB)
         .property("mIsSensorB",   &CharacterContact::mIsSensorB)
+        .property("mIsBackFacingContact", &CharacterContact::mIsBackFacingContact)
         // mCharacterB may dangle when read via GetActiveContacts() — prefer GetCharacterIDB.
         .function("GetCharacterB", +[](const CharacterContact &c) { return const_cast<CharacterVirtual *>(c.mCharacterB); }, allow_raw_pointers())
         .function("GetUserData", +[](const CharacterContact &c) { return (uint64)c.mUserData; })
@@ -4250,7 +4259,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
         }
         return arr;
     });
-    // _ctorMeta: {ClassName: [{n: paramName, t?: tsType}, ...]}
+    // _ctorMeta: {ClassName: [[{n: paramName, t?: tsType}, ...], ...]}, one list per named constructor
     emscripten::function("_ctorMeta", +[]() -> val {
         val obj = val::object();
         for (const auto& e : sCtorRegistry) {
@@ -4261,7 +4270,8 @@ EMSCRIPTEN_BINDINGS(jolt) {
                 if (!p.tsType.empty()) po.set("t", p.tsType);
                 params.call<void>("push", po);
             }
-            obj.set(e.cls, params);
+            if (obj[e.cls].isUndefined()) obj.set(e.cls, val::array());
+            obj[e.cls].call<void>("push", params);
         }
         return obj;
     });

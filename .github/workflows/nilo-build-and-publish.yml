@@ -76,7 +76,7 @@ jobs:
           LATEST_TAG=$(git ls-remote --tags --sort='-version:refname' "${REMOTE}" 'refs/tags/v*-nilo.*' \
             | awk '{print $2}' | sed 's|refs/tags/||' | grep -v '\^{}$' | head -n 1)
           if [ -z "${LATEST_TAG}" ]; then
-            echo "::error::No v*-nilo.* tags found on ${REMOTE}. Tag a release on nilo (e.g. v5.5.0-nilo.11) or pass jpjs_ref explicitly (e.g. 'nilo' for branch HEAD)."
+            echo "::error::No v*-nilo.* tags found on ${REMOTE}. Tag a release on nilo (e.g. v5.6.0-nilo.0) or pass jpjs_ref explicitly (e.g. 'nilo' for branch HEAD)."
             exit 1
           fi
           REF="${LATEST_TAG}"

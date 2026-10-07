@@ -29,7 +29,7 @@ let outMeta, ctorMeta, retMeta, layoutMeta;
 try {
   const jolt = await (await import(pathToFileURL(probePath).href)).default();
   outMeta = jolt._outMeta();     // [{cls, method, names:[…], sizes:[…], outTs:[…], passKinds:[…], passTs:[…]}]
-  ctorMeta = jolt._ctorMeta();   // {ClassName: [{n, t?}, …]}
+  ctorMeta = jolt._ctorMeta();   // {ClassName: [[{n, t?}, …], …]}, one list per named constructor
   retMeta = jolt._retMeta();     // [{cls, method, tsType}]
   layoutMeta = jolt._layoutMeta(); // {contactI32, contactF32, pointF32, removedI32, activeBody, nilo*}
 } catch (e) {
@@ -107,7 +107,9 @@ function applyCtorParams(src) {
   const spec = ctorMeta;
   const unmapped = new Set();
   src = src.replace(/^(\s*)new\(([^)]*)\): (\w+);/gm, (line, indent, params, cls) => {
-    const ps = spec[cls];
+    if (!params) return line;
+    const arity = params.split(', ').length;
+    const ps = spec[cls]?.find((list) => list.length === arity);
     if (!ps) { if (params.includes('_')) unmapped.add(cls); return line; }
     const renamed = params.split(', ').map((p, i) => {
       const s = ps[i];
@@ -233,7 +235,8 @@ export type CharacterVelocityOverride = { velocity?: Vec3 };
 /** Return from OnAdjustBodyVelocity to override the contacting body's velocity; omit a field to keep it. */
 export type AdjustedBodyVelocity = { linear?: Vec3; angular?: Vec3 };
 /** Shape of the object passed to \`CharacterContactListener.implement(...)\`. Every callback is optional.
- * \`contact\` is valid only during the callback; ids are numeric; ioSettings is mutated in place (a real
+ * \`contact\` is valid only during the callback and its contact normal points towards the character;
+ * ids are numeric; ioSettings is mutated in place (a real
  * handle), whereas velocity overrides are returned (see CharacterVelocityOverride / AdjustedBodyVelocity). */
 export interface CharacterContactListenerCallbacks {
   OnContactValidate?(character: CharacterVirtual, contact: CharacterContact): boolean;
