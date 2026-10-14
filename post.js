@@ -312,6 +312,15 @@
 
   function destroyActiveBodyBuffer(buf) { buf['_impl']['delete'](); }
 
+  function readCollideShapeBodyHits(collector, out) {
+    const count = collector['size']();
+    const base = collector['HitsU32Ptr']() >>> 2;
+    const u32 = Module['HEAPU32'];
+    out.length = count;
+    for (let i = 0; i < count; i++) out[i] = u32[base + i];
+    return count;
+  }
+
   // ---- out-param object factories ----
 
   const createContact         = () => ({ 'body1': 0, 'body2': 0, 'subShape1': 0, 'subShape2': 0,
@@ -346,6 +355,7 @@
     'updateActiveBodyBuffer':      updateActiveBodyBuffer,
     'getActiveBodyBufferStateAt':  getActiveBodyBufferStateAt,
     'destroyActiveBodyBuffer':     destroyActiveBodyBuffer,
+    'readCollideShapeBodyHits':    readCollideShapeBodyHits,
     // out-param object factories
     'createContact':               createContact,
     'createContactPoint':          createContactPoint,

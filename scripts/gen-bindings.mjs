@@ -223,6 +223,7 @@ export interface JoltFacade {
   getActiveBodyBufferStateAt(buffer: ActiveBodyBufferHandle, out: ActiveBodyState, index: number): ActiveBodyState;
   createActiveBodyState(): ActiveBodyState;
   destroyActiveBodyBuffer(buffer: ActiveBodyBufferHandle): void;
+  readCollideShapeBodyHits(collector: CollideShapeBodyAllHitCollector, out: number[]): number;
 }
 `;
 

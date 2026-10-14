@@ -433,13 +433,20 @@ template<typename CollectorType>
 static void registerAllHit(const char *inName) {
     using namespace emscripten;
     using C = JPH::AllHitCollisionCollector<CollectorType>;
-    class_<C, base<CollectorType>>(inName)
+    const auto cls = class_<C, base<CollectorType>>(inName)
         .template constructor<>()
         .function("HadHit", &C::HadHit)
         .function("Reset", &C::Reset)
-        .function("Sort", &C::Sort)
-        .function("size", +[](const C &c) { return (JPH::uint32)c.mHits.size(); })
-        .function("at(index)", +[](C &c, JPH::uint32 i) { return &c.mHits[i]; }, allow_raw_pointers());
+        .function("size", +[](const C &c) { return (JPH::uint32)c.mHits.size(); });
+    if constexpr (std::is_same_v<typename CollectorType::ResultType, JPH::BodyID>) {
+        // BodyID hits have no fraction to Sort by; post.js bulk-reads them.
+        static_assert(sizeof(JPH::BodyID) == sizeof(JPH::uint32));
+        cls.function("at(index)", +[](const C &c, JPH::uint32 i) { return c.mHits[i].GetIndexAndSequenceNumber(); })
+           .function("HitsU32Ptr", +[](const C &c) { return (uintptr_t)c.mHits.data(); });
+    } else {
+        cls.function("Sort", &C::Sort)
+           .function("at(index)", +[](C &c, JPH::uint32 i) { return &c.mHits[i]; }, allow_raw_pointers());
+    }
 }
 
 // JS-subclassable callbacks use wrapper + call<>(): class args forward as non-owning
@@ -2997,8 +3004,7 @@ EMSCRIPTEN_BINDINGS(jolt) {
     registerAllHit<RayCastBodyCollector>("RayCastBodyAllHitCollector");
     registerClosestHit<CastShapeBodyCollector>("CastShapeBodyClosestHitCollector");
     registerAllHit<CastShapeBodyCollector>("CastShapeBodyAllHitCollector");
-    // CollideShapeBodyCollector ResultType is BodyID (no GetEarlyOutFraction) — cannot use
-    // ClosestHit/AllHit templates. Use CollideShapeBodyCollector.implement({ AddHit(id){...} }).
+    registerAllHit<CollideShapeBodyCollector>("CollideShapeBodyAllHitCollector");
 
     // world-attachment sentinel body (for constraints attaching a body to the world)
     emscripten::function("sGetFixedToWorldBody", +[]() { return &Body::sFixedToWorld; }, allow_raw_pointers());
