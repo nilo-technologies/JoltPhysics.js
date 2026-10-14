@@ -202,28 +202,28 @@ export interface JoltFacade {
   createNiloContactsBuffer(physicsSystem: PhysicsSystem, numIterations?: number): NiloContactsBufferHandle;
   clearNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;    // between steps, once read
   updateNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;   // after Step, before reading
-  getNiloContactAddedAt(buffer: NiloContactsBufferHandle, out: NiloContactAdded, index: number): NiloContactAdded;
-  getNiloContactRemovedAt(buffer: NiloContactsBufferHandle, out: NiloContactRemoved, index: number): NiloContactRemoved;
+  getNiloContactAddedAt(out: NiloContactAdded, buffer: NiloContactsBufferHandle, index: number): NiloContactAdded;
+  getNiloContactRemovedAt(out: NiloContactRemoved, buffer: NiloContactsBufferHandle, index: number): NiloContactRemoved;
   destroyNiloContactsBuffer(buffer: NiloContactsBufferHandle): void;
   createNiloContactAdded(): NiloContactAdded;
   createNiloContactRemoved(): NiloContactRemoved;
   createContactBuffer(physicsSystem: PhysicsSystem): ContactBuffer;
   clearContactBuffer(buffer: ContactBuffer): void;    // before Step
   updateContactBuffer(buffer: ContactBuffer): void;   // after Step
-  getContactBufferAddedAt(buffer: ContactBuffer, out: Contact, index: number): Contact;
-  getContactBufferPersistedAt(buffer: ContactBuffer, out: Contact, index: number): Contact;
-  getContactBufferRemovedAt(buffer: ContactBuffer, out: RemovedContact, index: number): RemovedContact;
-  getContactBufferPointAt(buffer: ContactBuffer, out: ContactPoint, contact: Contact, pointIndex: number): ContactPoint;
+  getContactBufferAddedAt(out: Contact, buffer: ContactBuffer, index: number): Contact;
+  getContactBufferPersistedAt(out: Contact, buffer: ContactBuffer, index: number): Contact;
+  getContactBufferRemovedAt(out: RemovedContact, buffer: ContactBuffer, index: number): RemovedContact;
+  getContactBufferPointAt(out: ContactPoint, buffer: ContactBuffer, contact: Contact, pointIndex: number): ContactPoint;
   destroyContactBuffer(buffer: ContactBuffer): void;
   createContact(): Contact;
   createContactPoint(): ContactPoint;
   createRemovedContact(): RemovedContact;
   createActiveBodyBuffer(physicsSystem: PhysicsSystem): ActiveBodyBufferHandle;
   updateActiveBodyBuffer(buffer: ActiveBodyBufferHandle): void;
-  getActiveBodyBufferStateAt(buffer: ActiveBodyBufferHandle, out: ActiveBodyState, index: number): ActiveBodyState;
+  getActiveBodyBufferStateAt(out: ActiveBodyState, buffer: ActiveBodyBufferHandle, index: number): ActiveBodyState;
   createActiveBodyState(): ActiveBodyState;
   destroyActiveBodyBuffer(buffer: ActiveBodyBufferHandle): void;
-  readCollideShapeBodyHits(collector: CollideShapeBodyAllHitCollector, out: number[]): number;
+  readCollideShapeBodyHits(out: number[], collector: CollideShapeBodyAllHitCollector): number;
 }
 `;
 

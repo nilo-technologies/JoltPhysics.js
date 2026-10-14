@@ -168,15 +168,15 @@
     return out;
   }
 
-  function getContactBufferAddedAt(buf, out, i) {
+  function getContactBufferAddedAt(out, buf, i) {
     return _readContact(buf._addedI32Base, buf._addedF32Base, buf, out, i);
   }
 
-  function getContactBufferPersistedAt(buf, out, i) {
+  function getContactBufferPersistedAt(out, buf, i) {
     return _readContact(buf._persistedI32Base, buf._persistedF32Base, buf, out, i);
   }
 
-  function getContactBufferRemovedAt(buf, out, i) {
+  function getContactBufferRemovedAt(out, buf, i) {
     const iBase = buf._removedI32Base + i * REMOVED_I32_STRIDE;
     const ri = Module['HEAP32'];
     out['body1']    = ri[iBase]     >>> 0;
@@ -186,7 +186,7 @@
     return out;
   }
 
-  function getContactBufferPointAt(buf, out, contact, i) {
+  function getContactBufferPointAt(out, buf, contact, i) {
     const fBase = buf._pointsF32Base + (contact._ptStart + i) * POINT_F32_STRIDE;
     const pf = Module['HEAPF32'];
     out['on1'][0] = pf[fBase];     out['on1'][1] = pf[fBase + 1]; out['on1'][2] = pf[fBase + 2];
@@ -244,7 +244,7 @@
     buf._removedI32Base = impl['RemovedI32Ptr']() >>> 2;
   }
 
-  function getNiloContactAddedAt(buf, out, i) {
+  function getNiloContactAddedAt(out, buf, i) {
     const i32 = Module['HEAP32'], f32 = Module['HEAPF32'];
     const iBase = buf._addedI32Base + i * NILO_ADDED_I32_STRIDE;
     const fBase = buf._addedF32Base + i * NILO_ADDED_F32_STRIDE;
@@ -259,7 +259,7 @@
     return out;
   }
 
-  function getNiloContactRemovedAt(buf, out, i) {
+  function getNiloContactRemovedAt(out, buf, i) {
     const i32 = Module['HEAP32'];
     const iBase = buf._removedI32Base + i * NILO_REMOVED_I32_STRIDE;
     out['body1'] = i32[iBase]     >>> 0;
@@ -298,7 +298,7 @@
     buf._f32Base = buf['_impl']['BodiesF32Ptr']() >>> 2;
   }
 
-  function getActiveBodyBufferStateAt(buf, out, i) {
+  function getActiveBodyBufferStateAt(out, buf, i) {
     const base = buf._f32Base + i * ACTIVE_BODY_STRIDE;
     const f32 = Module['HEAPF32'], u32 = Module['HEAPU32'];
     out['id']          = u32[base];
@@ -312,7 +312,7 @@
 
   function destroyActiveBodyBuffer(buf) { buf['_impl']['delete'](); }
 
-  function readCollideShapeBodyHits(collector, out) {
+  function readCollideShapeBodyHits(out, collector) {
     const count = collector['size']();
     const base = collector['HitsU32Ptr']() >>> 2;
     const u32 = Module['HEAPU32'];
