@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js pulley constraint demo<br/>
+		Boxes joined by pulley constraints (with varying ratios)</div>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, createFloor, createBox, createSphere, LAYER_MOVING } from './js/example.js';
+
+			const Jolt = await initJolt();
+
+			class Line3DMesh {
+				constructor(point1, point2, color) {
+					this.point1 = point1;
+					this.point2 = point2;
+					const points = this._points = [point1, point2];
+					const material = new THREE.LineBasicMaterial({ color });
+					const geometry = this._geometry = new THREE.BufferGeometry().setFromPoints(points);
+					this._line = new THREE.Line(geometry, material);
+				}
+				update() { this._geometry.setFromPoints(this._points); }
+				getMesh() { return this._line; }
+			}
+
+			const lineUpdates = [];
+			initExample(Jolt, () => { lineUpdates.forEach(func => func()); });
+			const { physicsSystem, bodyInterface, scene, dynamicObjects } = Example;
+			const IDENTITY = [0, 0, 0, 1];
+			const SIZE = [0.5, 0.1, 0.5];
+
+			const fixedPointMaterial = new THREE.MeshPhongMaterial({ color: '#ffff00' });
+			const bodyPointMaterial = new THREE.MeshPhongMaterial({ color: '#00ff00' });
+			const fixedPointGeometry = new THREE.SphereGeometry(0.25, 32, 32);
+			function createPulleyGraphics(threeBox1, threeBox2, attachOffset1, attachOffset2, fixed1, fixed2, constraintSettings) {
+				const fixedPoint1 = new THREE.Mesh(fixedPointGeometry, fixedPointMaterial);
+				const fixedPoint2 = new THREE.Mesh(fixedPointGeometry, fixedPointMaterial);
+				const bodyPoint1 = new THREE.Mesh(fixedPointGeometry, bodyPointMaterial);
+				const bodyPoint2 = new THREE.Mesh(fixedPointGeometry, bodyPointMaterial);
+				scene.add(fixedPoint1);
+				scene.add(fixedPoint2);
+				threeBox1.add(bodyPoint1);
+				threeBox2.add(bodyPoint2);
+				fixedPoint1.position.copy(fixed1);
+				fixedPoint2.position.copy(fixed2);
+				bodyPoint1.position.copy(attachOffset1);
+				bodyPoint2.position.copy(attachOffset2);
+				constraintSettings.mFixedPoint1 = [fixed1.x, fixed1.y, fixed1.z];
+				constraintSettings.mFixedPoint2 = [fixed2.x, fixed2.y, fixed2.z];
+				constraintSettings.mSpace = Jolt.EConstraintSpace.LocalToBodyCOM;
+				constraintSettings.mBodyPoint1 = [attachOffset1.x, attachOffset1.y, attachOffset1.z];
+				constraintSettings.mBodyPoint2 = [attachOffset2.x, attachOffset2.y, attachOffset2.z];
+				const line1 = new Line3DMesh(new THREE.Vector3(), fixedPoint1.position, '#FF0000');
+				const line2 = new Line3DMesh(new THREE.Vector3(), fixedPoint2.position, '#0000FF');
+				const line3 = new Line3DMesh(fixedPoint1.position, fixedPoint2.position, '#00FF00');
+				scene.add(line1.getMesh());
+				scene.add(line2.getMesh());
+				scene.add(line3.getMesh());
+				lineUpdates.push(
+					() => { bodyPoint1.getWorldPosition(line1.point1); line1.update(); },
+					() => { bodyPoint2.getWorldPosition(line2.point1); line2.update(); }
+				);
+			}
+
+			createFloor();
+			const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+			const lastMesh = () => dynamicObjects[dynamicObjects.length - 1];
+
+			let xOffset = -10;
+			{
+				const box1 = createBox([xOffset - 1, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box1.GetMotionProperties().SetInverseMass(1 / 111);
+				const threeBox1 = lastMesh();
+				const box2 = createBox([xOffset + 1, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box1.GetMotionProperties().SetInverseMass(1 / 112);
+				const threeBox2 = lastMesh();
+				createSphere([xOffset - 1, 4.6, 0], 0.5, Jolt.EMotionType.Dynamic, LAYER_MOVING).GetMotionProperties().SetInverseMass(1 / 111);
+				const pulley1 = new Jolt.PulleyConstraintSettings();
+				createPulleyGraphics(threeBox1, threeBox2, V3(0, 0.1, 0), V3(0, 0.1, 0), V3(xOffset - 1, 9, 0), V3(xOffset + 1, 9, 0), pulley1);
+				physicsSystem.AddConstraint(pulley1.Create(box1, box2));
+			}
+			xOffset = -5;
+			{
+				const box1 = createBox([xOffset - 0.6, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box1.GetMotionProperties().SetInverseMass(1 / 111);
+				const threeBox1 = lastMesh();
+				const box2 = createBox([xOffset + 0.6, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box1.GetMotionProperties().SetInverseMass(1 / 112);
+				const threeBox2 = lastMesh();
+				const pulley1 = new Jolt.PulleyConstraintSettings();
+				createPulleyGraphics(threeBox1, threeBox2, V3(0, 0.1, 0), V3(0, 0.1, 0), V3(xOffset - 1, 9, 0), V3(xOffset + 1, 9, 0), pulley1);
+				physicsSystem.AddConstraint(pulley1.Create(box1, box2));
+			}
+			xOffset = 0;
+			{
+				const box1 = createBox([xOffset - 1, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				const threeBox1 = lastMesh();
+				const box2 = createBox([xOffset + 1, 4, 0], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				const threeBox2 = lastMesh();
+				createSphere([xOffset - 1.1, 4.6, .1], 0.5, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				const pulley1 = new Jolt.PulleyConstraintSettings();
+				createPulleyGraphics(threeBox1, threeBox2, V3(0, 0.1, 0), V3(0, 0.1, 0), V3(xOffset - 1, 9, 0), V3(xOffset + 1, 9, 0), pulley1);
+				physicsSystem.AddConstraint(pulley1.Create(box1, box2));
+			}
+			xOffset = 5;
+			{
+				const box1 = createBox([xOffset - 1, 4, 1], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				const threeBox1 = lastMesh();
+				const box2 = createBox([xOffset + 1, 4, -1], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				const threeBox2 = lastMesh();
+				const pulley1 = new Jolt.PulleyConstraintSettings();
+				createPulleyGraphics(threeBox1, threeBox2, V3(-0.5, 0.1, 0), V3(0.5, 0.1, 0.5), V3(xOffset - 1, 9, 0), V3(xOffset + 1, 9, 0), pulley1);
+				physicsSystem.AddConstraint(pulley1.Create(box1, box2));
+			}
+			// ratioed pulleys (further back)
+			const zOffset = -8;
+			for (const [x, ratio] of [[-2, 1], [4, 0.6], [10, 0.2]]) {
+				const box1 = createBox([x - 1, 6, zOffset], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box1.GetMotionProperties().SetInverseMass(1 / 2);
+				const threeBox1 = lastMesh();
+				const box2 = createBox([x + 1, 6, zOffset], IDENTITY, SIZE, Jolt.EMotionType.Dynamic, LAYER_MOVING);
+				box2.GetMotionProperties().SetInverseMass(1 / 4);
+				const threeBox2 = lastMesh();
+				const pulley1 = new Jolt.PulleyConstraintSettings();
+				pulley1.mRatio = ratio;
+				createPulleyGraphics(threeBox1, threeBox2, V3(0, 0.1, 0), V3(0, 0.1, 0), V3(x - 1, 14, zOffset), V3(x + 1, 14, zOffset), pulley1);
+				physicsSystem.AddConstraint(pulley1.Create(box1, box2));
+			}
+		</script>
+	</body>
+</html>

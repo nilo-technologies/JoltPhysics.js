@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="../style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js soft body LRA constraint demo<br />
+		Two hanging cloths: without (red) and with (green) Euclidean-distance long-range-attachment constraints</div>
+
+		<script type="module">
+			import initJolt from '../../dist/jolt-physics.wasm-compat.js';
+			import * as Example from '../js/example.js';
+			import { initExample, createFloor, addSoftBodyToScene, LAYER_MOVING } from '../js/example.js';
+			import { createCloth } from '../js/soft-body-creator.js';
+
+			const cNumVerticesX = 10, cNumVerticesZ = 50, cVertexSpacing = 0.5;
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const { bodyInterface, camera } = Example;
+			createFloor();
+			camera.position.z += 40;
+
+			const inv_mass = (x, z) => z == 0 ? 0 : 1;   // pin the top row
+			const perturbation = () => ({ x: 0, y: 0, z: 0 });
+			const IDENT = [0, 0, 0, 1];
+			// Soften the edges a bit (1e-3) so the effect of the LRA constraints is more visible
+			const COLOR_NONE = 0xaa0000, COLOR_EUCLID = 0x00aa00;
+
+			const addCloth = (lraType, x, color) => {
+				const s = createCloth(Jolt, cNumVerticesX, cNumVerticesZ, cVertexSpacing, inv_mass, perturbation, Jolt.EBendType.None, lraType, 1.0, 1.0e-3);
+				addSoftBodyToScene(bodyInterface.CreateSoftBody(new Jolt.SoftBodyCreationSettings(s, [x, 25, 0], IDENT, LAYER_MOVING)), s, color);
+			};
+			addCloth(Jolt.ELRAType.None, -10, COLOR_NONE);
+			addCloth(Jolt.ELRAType.EuclideanDistance, 10, COLOR_EUCLID);
+		</script>
+	</body>
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>JoltPhysics.js demo</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link rel="stylesheet" type="text/css" href="style.css">
+		<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+		</script>
+	</head>
+	<body>
+		<div id="container">Loading...</div>
+		<div id="info">JoltPhysics.js heightfield demo<br />
+			Click Terrain to modify height: <select id="raise-lower"><option value="-0.1">Lower</option><option value="0.1">Raise</option></select><br />
+			Note: Terrain limited to original min/max bounds of height.
+		</div>
+
+		<svg id="sampleImg" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 256 256">
+			<defs>
+				<filter id="turbulenceFilter">
+					<feTurbulence type="fractalNoise" baseFrequency=".02" numOctaves="3" seed="5" result="turbulence" />
+					<feColorMatrix in="turbulence" type="matrix" result="grayscale" values=".33 .33 .33 0 0
+													.33 .33 .33 0 0
+													.33 .33 .33 0 0
+													0 0 0 1 0" />
+					<feComposite operator="in" in="grayscale" in2="SourceGraphic" />
+					<feComponentTransfer color-interpolation-filters="sRGB">
+						<feFuncR type="gamma" exponent="1.5" amplitude="1.3" offset="0"></feFuncR>
+						<feFuncG type="gamma" exponent="1.5" amplitude="1.3" offset="0"></feFuncG>
+						<feFuncB type="gamma" exponent="1.5" amplitude="1.3" offset="0"></feFuncB>
+					</feComponentTransfer>
+				</filter>
+			</defs>
+			<rect x="0" y="0" width="256" height="256" filter="url(#turbulenceFilter)"></rect>
+			<text x="64" y="96" style="font-weight: bold; font-size: 52px; user-select: none; fill: #f0f">JOLT</text>
+			<text x="16" y="168" style="font-weight: bold; font-size: 52px; user-select: none; fill: #ff0">PHYSICS</text>
+		</svg>
+
+		<script type="module">
+			import initJolt from '../dist/jolt-physics.wasm-compat.js';
+			import * as THREE from 'three';
+			import * as Example from './js/example.js';
+			import { initExample, createSphere, LAYER_MOVING, LAYER_NON_MOVING } from './js/example.js';
+
+			const mapScale = 0.35;
+			const BLOCK_SIZE = 2;
+			const IMAGE_SIZE = 256;
+			// Used for both the extraction of image-data to a height map, and for the CanvasTexture used to render the displacement map on the THREE side
+			const displacementCanvas = document.createElement('canvas');
+			// Used to overlay markers indicating a region will change, and to allow rendering of original SVG even after modified
+			const visibleTextureCanvas = document.createElement('canvas');
+
+			let displacementContext2D;
+			let visibleCanvasContext2d;
+
+			const Jolt = await initJolt();
+			initExample(Jolt, null);
+			const { physicsSystem, bodyInterface, jolt, scene, camera, controls } = Example;
+
+			// Build a HeightFieldShape body from the current displacement canvas.
+			// The ergonomic HeightFieldShapeSettings takes a plain samples array directly
+			// (no mHeightSamples.resize + HEAPF32 plumbing); holes use Jolt.cNoCollisionValue.
+			function heightFieldFromSVG(x, z) {
+				const canvas = displacementCanvas;
+				const imgData = displacementContext2D.getImageData(0, 0, canvas.width, canvas.height);
+				const total = canvas.width * canvas.height;
+				const samples = new Float32Array(total);
+				for (let i = 0; i < total; i++)
+					samples[i] = imgData.data[i * 4 + 3] == 0 ? Jolt.cNoCollisionValue : imgData.data[i * 4]; // red channel; invisible pixels make holes
+
+				const shapeSettings = new Jolt.HeightFieldShapeSettings(samples, [0, 0, 0], [mapScale, 0.1, mapScale], canvas.width);
+				shapeSettings.mBlockSize = BLOCK_SIZE;
+				const shape = shapeSettings.Create().Get();
+
+				const bcs = new Jolt.BodyCreationSettings(shape, [x, -20, z], [0, 0, 0, 1], Jolt.EMotionType.Static, LAYER_NON_MOVING); // offset down: the image tends towards 'white'
+				return bodyInterface.CreateBody(bcs);
+			}
+
+			const img = new Image();
+			img.width = displacementCanvas.width = visibleTextureCanvas.width = IMAGE_SIZE;
+			img.height = displacementCanvas.height = visibleTextureCanvas.height = IMAGE_SIZE;
+			displacementContext2D = displacementCanvas.getContext('2d');
+			visibleCanvasContext2d = visibleTextureCanvas.getContext('2d');
+			img.src = 'data:image/svg+xml;base64,' + btoa(document.querySelector('svg').outerHTML);
+			await new Promise(resolve => img.onload = resolve);
+
+			// load initial canvas, both depth and graphical overlay, with the SVG image
+			displacementContext2D.drawImage(img, 0, 0);
+			visibleCanvasContext2d.drawImage(img, 0, 0);
+			const terrain = heightFieldFromSVG(-img.width * mapScale / 2, -img.width * mapScale / 2);
+			const terrainID = terrain.GetID();
+
+			// Create two distinct textures. One for depth, one for the original image and any overlay we draw on it
+			const displacementMap = new THREE.CanvasTexture(displacementCanvas);
+			const overlayMap = new THREE.CanvasTexture(visibleTextureCanvas);
+
+			// Creating the THREE JS plane with displacement.
+			// Note: Jolt HeightField maps each pixel to a vertex, so actual terrain is a SIZE-1 grid
+			const planeMesh = new THREE.Mesh(
+				new THREE.PlaneGeometry(img.width * mapScale, img.width * mapScale, IMAGE_SIZE, IMAGE_SIZE),
+				new THREE.MeshPhongMaterial({
+					displacementMap: displacementMap,
+					map: overlayMap,
+					displacementScale: 256 * 0.1, // This should match the Y multiplier used on the ShapeSettings scale.
+					flatShading: true
+				})
+			);
+			planeMesh.rotation.x = -Math.PI / 2; // ThreeJS Planes use a Z-axis normal, so rotate to lie flat
+			planeMesh.position.y -= 20; // Mirror the same Y offset used on the HeightField above
+			planeMesh.geometry.computeVertexNormals();
+			planeMesh.material.needsUpdate = true;
+
+			bodyInterface.AddBody(terrainID, Jolt.EActivation.Activate);
+			scene.add(planeMesh);
+
+			// Create a bunch of spheres to drop on the terrain
+			for (let y = 0; y < 10; y++)
+				for (let x = 0; x < 10; x++)
+					createSphere([-31 + x * 62 / 10, 20, -31 + y * 62 / 10], 1, Jolt.EMotionType.Dynamic, LAYER_MOVING, 0xFF0000);
+
+			const READ_SIZE = 8;
+
+			// Update the THREE JS heightmap based on the given block of samples
+			function updateThreeHeightMap(offsetX, offsetY, heights) {
+				const textureImageData = displacementContext2D.getImageData(offsetX, offsetY, READ_SIZE, READ_SIZE);
+				for (let i = 0; i < heights.length; i++)
+					for (let j = 0; j < 3; j++)
+						textureImageData.data[i * 4 + j] = heights[i] * 10;
+				displacementContext2D.putImageData(textureImageData, offsetX, offsetY);
+				displacementMap.needsUpdate = true; // Canvas changed, tell THREE to re-upload the texture
+			}
+
+			// GetShape auto-downcasts to HeightFieldShape (embind RTTI) — no castObject needed
+			const terrainHeightFieldShape = bodyInterface.GetShape(terrainID);
+			// Given a fraction X,Y, alter the HeightField by a fixed float amount
+			function changeTerrainShape(fractionX, fractionY, amount) {
+				const offsetX = Math.min(Math.max((Math.floor(fractionX * IMAGE_SIZE) - 3) & -BLOCK_SIZE, 0), img.width - READ_SIZE); // offset left of click, multiple of block size
+				const offsetY = Math.min(Math.max((Math.floor(fractionY * IMAGE_SIZE) - 3) & -BLOCK_SIZE, 0), img.height - READ_SIZE); // offset up from click, multiple of block size
+
+				const heights = terrainHeightFieldShape.GetHeights(offsetX, offsetY, READ_SIZE, READ_SIZE); // Float32Array
+				for (let i = 0; i < heights.length; i++) heights[i] += amount;
+
+				const centerOfMass = bodyInterface.GetCenterOfMassPosition([0, 0, 0], terrainID); // out-first facade convention
+				terrainHeightFieldShape.SetHeights(offsetX, offsetY, READ_SIZE, READ_SIZE, heights, jolt);
+				bodyInterface.NotifyShapeChanged(terrainID, centerOfMass, false, Jolt.EActivation.Activate);
+				updateThreeHeightMap(offsetX, offsetY, heights); // Reload the THREE JS texture for just this region
+			}
+
+			// Tools to convert from screen/camera space to Rays usable for picking our terrain
+			const rayCaster_3js = new THREE.Raycaster();
+			const pointerV2_3js = new THREE.Vector2();
+			// We modify the shape but never move the body, so fetch this transformed shape once.
+			const transformedShape = bodyInterface.GetTransformedShape(terrainID);
+
+			// Tiny sphere shown on top of the canvas to indicate the actual RayCast location
+			const cursorIndicator = new THREE.Mesh(new THREE.SphereGeometry(0.25, 32, 32), new THREE.MeshPhongMaterial({ color: '#00ff00' }));
+			scene.add(cursorIndicator);
+			cursorIndicator.visible = false;
+
+			function mouseEventToTerrainCoords(mouseEvt) {
+				pointerV2_3js.x = (mouseEvt.clientX / window.innerWidth) * 2 - 1;
+				pointerV2_3js.y = -(mouseEvt.clientY / window.innerHeight) * 2 + 1;
+				rayCaster_3js.setFromCamera(pointerV2_3js, camera); // stock THREE picker logic
+				const { origin, direction } = rayCaster_3js.ray;
+				direction.multiplyScalar(1000); // Jolt ray reach == direction length; make it long enough to hit
+
+				// Ergonomic CastRay: plain [x,y,z] arrays in, null or { fraction, point:[x,y,z] } out
+				const hit = transformedShape.CastRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z]);
+				if (hit) {
+					const intersectThreeVector = new THREE.Vector3().fromArray(hit.point);
+					cursorIndicator.position.copy(intersectThreeVector);
+					cursorIndicator.visible = true;
+					// Convert to plane-local UV using the plane's world matrix (clone: THREE mutates in place)
+					const localPosition = intersectThreeVector.clone().applyMatrix4(planeMesh.matrixWorld.clone().invert());
+					localPosition.multiplyScalar(1.0 / (img.width * mapScale)); // -0.5..0.5 in X and Y
+					const { x, y } = localPosition;
+					// invert Y because texture space uses a different origin (THREE Texture.flipY)
+					return { mapSpace: { x: x + 0.5, y: -y + 0.5 }, worldSpace: intersectThreeVector };
+				}
+				return null;
+			}
+
+			visibleCanvasContext2d.fillStyle = 'rgba(0,0,0,.4)';
+			controls.domElement.addEventListener('mousemove', (mouseEvt) => {
+				const coords = mouseEventToTerrainCoords(mouseEvt);
+				visibleCanvasContext2d.drawImage(img, 0, 0); // clear previous overlay
+				if (coords) {
+					const { x, y } = coords.mapSpace;
+					visibleCanvasContext2d.fillRect(x * IMAGE_SIZE - 3, y * IMAGE_SIZE - 3, 6, 6); // mark the terrain-altering region
+					overlayMap.needsUpdate = true;
+				} else {
+					overlayMap.needsUpdate = true;
+					cursorIndicator.visible = false;
+				}
+			});
+
+			const raiseLower = document.getElementById('raise-lower');
+			controls.domElement.addEventListener('click', (mouseEvt) => {
+				const coords = mouseEventToTerrainCoords(mouseEvt);
+				if (coords) {
+					visibleCanvasContext2d.drawImage(img, 0, 0);
+					const { x, y } = coords.mapSpace;
+					visibleCanvasContext2d.fillRect(x * IMAGE_SIZE - 3, y * IMAGE_SIZE - 3, 6, 6);
+					overlayMap.needsUpdate = true;
+					changeTerrainShape(x, y, parseFloat(raiseLower.value)); // alter the terrain by the selected amount
+				}
+			});
+		</script>
+	</body>
+</html>
